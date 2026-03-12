@@ -1,5 +1,5 @@
 /**
- * Mock Data - Mirrors backend API response shapes EXACTLY.
+33 * Mock Data - Mirrors backend API response shapes EXACTLY.
  * Replace with real API calls when backend is connected.
  *
  * API Endpoints:
@@ -17,7 +17,7 @@ export const mockRtuUser = {
     id: 101,
     email: 'zann@example.edu',
     first_name: 'Zann',
-    last_name: 'Doe',
+    last_name: 'Cute',
     middle_name: null,
     is_active: true,
     created_at: '2026-03-11T08:00:00Z',
@@ -36,44 +36,22 @@ export const mockRtuUser = {
     },
 }
 
-// School 2 Student (JRMSU)
-export const mockJrmsuUser = {
-    id: 102,
-    email: 'maria@example.edu',
-    first_name: 'Maria',
-    last_name: 'Clara',
-    middle_name: null,
-    is_active: true,
-    created_at: '2026-03-11T08:00:00Z',
-    school_id: 2, // JRMSU
-    roles: [
-        { role: { id: 2, name: 'student' } },
-    ],
-    ssg_profile: null,
-    student_profile: {
-        id: 56,
-        student_id: 'IT-2026-002',
-        department_id: 4,
-        program_id: 8,
-        year_level: 1,
-        attendances: [],
-    },
-}
-
 // 👉 To test the other school's login, change 'mockRtuUser' below to 'mockJrmsuUser'
 export const mockCurrentUser = mockRtuUser
 
 // ─── Events ──────────────────────────────────────────────────────────────────
 // Matches: Event schema
 // Key fields: id, name, location, start_datetime, end_datetime, status,
-//             school_id, department_ids[], program_ids[], ssg_member_ids[]
+//             school_id, department_ids[], program_ids[], ssg_member_ids[],
+//             geo_latitude, geo_longitude, geo_radius_m, geo_required,
+//             geo_max_accuracy_m, late_threshold_minutes
 export const mockEvents = [
     {
         id: 1,
         name: 'Foundation Day Celebration',
         location: 'Main Gymnasium, Building A',
-        start_datetime: '2026-03-15T08:00:00',
-        end_datetime: '2026-03-15T17:00:00',
+        start_datetime: '2026-03-15T08:00:00Z',
+        end_datetime: '2026-03-15T17:00:00Z',
         status: 'upcoming',
         school_id: 1,
         department_ids: [1],
@@ -82,14 +60,19 @@ export const mockEvents = [
         departments: [{ id: 1, name: 'All Departments' }],
         programs: [],
         ssg_members: [],
-        description: 'Annual Foundation Day with special performances, food stalls, and awarding ceremonies.',
+        geo_latitude: 8.657256484910368,
+        geo_longitude: 123.42312902908029,
+        geo_radius_m: 120,
+        geo_required: false,
+        geo_max_accuracy_m: null,
+        late_threshold_minutes: null,
     },
     {
         id: 2,
         name: 'Engineering Week Summit',
         location: 'College of Engineering Amphitheater',
-        start_datetime: '2026-03-20T09:00:00',
-        end_datetime: '2026-03-22T18:00:00',
+        start_datetime: '2026-03-20T09:00:00Z',
+        end_datetime: '2026-03-22T18:00:00Z',
         status: 'upcoming',
         school_id: 1,
         department_ids: [2],
@@ -98,24 +81,76 @@ export const mockEvents = [
         departments: [{ id: 2, name: 'College of Engineering' }],
         programs: [],
         ssg_members: [],
-        description: 'Showcase of student engineering projects, technical competitions, and career talks.',
+        geo_latitude: null,
+        geo_longitude: null,
+        geo_radius_m: null,
+        geo_required: false,
+        geo_max_accuracy_m: null,
+        late_threshold_minutes: null,
     },
     {
         id: 3,
         name: 'IT Skills Competition',
         location: 'Computer Laboratory 3',
-        start_datetime: '2026-03-25T13:00:00',
-        end_datetime: '2026-03-25T17:00:00',
+        start_datetime: '2026-03-25T13:00:00Z',
+        end_datetime: '2026-03-25T17:00:00Z',
         status: 'upcoming',
         school_id: 1,
         department_ids: [3],
         program_ids: [7],
         ssg_member_ids: [],
         departments: [{ id: 3, name: 'College of IT' }],
-        programs: [{ id: 7, name: 'BSCS' }],
+        programs: [{ id: 7, name: 'BSCS', department_ids: [3] }],
         ssg_members: [],
-        description: 'Annual IT Skills Competition for all IT and CS students.',
+        geo_latitude: null,
+        geo_longitude: null,
+        geo_radius_m: null,
+        geo_required: false,
+        geo_max_accuracy_m: null,
+        late_threshold_minutes: null,
     },
+    {
+        id: 4,
+        name: 'Freshmen Orientation',
+        location: 'Main Auditorium',
+        start_datetime: '2026-02-15T08:00:00Z',
+        end_datetime: '2026-02-15T12:00:00Z',
+        status: 'completed',
+        school_id: 1,
+        department_ids: [],
+        program_ids: [],
+        ssg_member_ids: [],
+        departments: [],
+        programs: [],
+        ssg_members: [],
+        geo_latitude: null,
+        geo_longitude: null,
+        geo_radius_m: null,
+        geo_required: false,
+        geo_max_accuracy_m: null,
+        late_threshold_minutes: null,
+    },
+    {
+        id: 5,
+        name: 'Intramurals Opening',
+        location: 'University Oval',
+        start_datetime: '2026-03-12T07:00:00Z',
+        end_datetime: '2026-03-12T17:00:00Z',
+        status: 'ongoing',
+        school_id: 1,
+        department_ids: [],
+        program_ids: [],
+        ssg_member_ids: [],
+        departments: [],
+        programs: [],
+        ssg_members: [],
+        geo_latitude: 8.657256484910368,
+        geo_longitude: 123.42312902908029,
+        geo_radius_m: 120,
+        geo_required: true,
+        geo_max_accuracy_m: 25,
+        late_threshold_minutes: 10,
+    }
 ]
 
 // ─── School Settings ─────────────────────────────────────────────────────────
@@ -123,8 +158,8 @@ export const mockEvents = [
 // School 1 (Default Lime Green Theme)
 export const mockRtuSettings = {
     school_id: 1,
-    school_name: 'Rizal Technological University',
-    primary_color: '#AAFF00', // Lime Green
+    school_name: 'Jose Rizal Memorial State University',
+    primary_color: '#ffff00ff', // Lime Green
     secondary_color: '#0A0A0A',
     accent_color: '#88CC00',
     logo_url: '/src/data/jrmsu_icon.png',
@@ -133,33 +168,31 @@ export const mockRtuSettings = {
 // School 2 (Example Blue/Gold Theme)
 export const mockJrmsuSettings = {
     school_id: 2,
-    school_name: 'Jose Rizal Memorial State University',
-    primary_color: '#00205B', // Deep Blue
+    school_name: 'Unibirsedad ng Pilipinas',
+    primary_color: '#001B5E', // Deep Blue
     secondary_color: '#FFFFFF',
     accent_color: '#FFB81C', // Gold
-    logo_url: '/src/data/jrmsu_main_icon.png',
+    logo_url: '/src/data/up.png',
 }
 
-// 👉 To test a different school, change 'mockRtuSettings' below to 'mockJrmsuSettings'
-export const mockSchoolSettings = mockRtuSettings
+/**
+ * School settings lookup map — keyed by school_id.
+ * Mirrors the real backend: GET /school-settings/me returns the settings
+ * for the school the authenticated user belongs to.
+ *
+ * When connecting the backend:
+ *   - Remove this map entirely
+ *   - Call GET /school-settings/me after login
+ *   - Pass the response to applyTheme()
+ */
+export const mockSchoolSettingsMap = {
+    [mockRtuSettings.school_id]: mockRtuSettings,
+    [mockJrmsuSettings.school_id]: mockJrmsuSettings,
+}
+
+// Auto-derives from the logged-in user's school_id — no hardcoding.
+// Changing mockCurrentUser's school_id automatically picks the correct theme.
+export const mockSchoolSettings = mockSchoolSettingsMap[mockCurrentUser.school_id] ?? mockRtuSettings
 
 // ─── Announcements ───────────────────────────────────────────────────────────
 // Flexible shape — endpoint TBD in backend (for future connection)
-export const mockAnnouncements = [
-    {
-        id: 1,
-        title: 'Class Suspension – March 14',
-        body: 'All classes are suspended on March 14 due to Foundation Day preparations.',
-        created_at: '2026-03-10T08:00:00Z',
-        is_read: false,
-        type: 'announcement',
-    },
-    {
-        id: 2,
-        title: 'Scholarship Applications Open',
-        body: 'Applications for the University Scholarship Program are now open until March 31.',
-        created_at: '2026-03-09T10:00:00Z',
-        is_read: true,
-        type: 'announcement',
-    },
-]

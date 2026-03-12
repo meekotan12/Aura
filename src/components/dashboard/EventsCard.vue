@@ -1,6 +1,6 @@
 <template>
   <!-- Events Card: left side shows "Latest Event" label, right shows event details -->
-  <div class="rounded-3xl overflow-hidden w-full shadow-sm" style="background: var(--color-surface);">
+  <div class="rounded-3xl overflow-hidden w-full" style="background: var(--color-surface);">
     <div class="flex h-full">
       <!-- Left: Label + CTA -->
       <div class="flex flex-col justify-between p-5 flex-1">
@@ -43,7 +43,7 @@
               {{ latestEvent.name }}
             </h4>
             <p class="text-[12px] leading-relaxed mb-2" style="color: var(--color-text-secondary);">
-              {{ truncate(latestEvent.description || latestEvent.location, 80) }}
+              {{ truncate(latestEvent.location, 80) }}
             </p>
             <p class="text-[11px] font-medium" style="color: var(--color-text-muted);">
               {{ formatDate(latestEvent.start_datetime) }}
