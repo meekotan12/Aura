@@ -13,22 +13,25 @@ body {
   background-color: var(--color-bg);
   margin: 0;
   padding: 0;
+  -webkit-text-size-adjust: 100%;
 }
 
 html {
   min-height: 100%;
   overflow-y: scroll;
   scrollbar-gutter: stable;
+  touch-action: manipulation;
 }
 
 body {
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100dvh;
   color: var(--color-text-primary);
+  overscroll-behavior: none;
 }
 
 #app {
-  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
 }
 
@@ -62,5 +65,14 @@ body {
     opacity: 1;
     transform: none;
     animation: none;
+  }
+}
+
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea,
+  button {
+    font-size: 16px;
   }
 }

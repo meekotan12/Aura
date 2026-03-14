@@ -9,6 +9,14 @@ export const activeAuraLogo = ref('/logos/aura_logo_black.png')
 export const surfaceAuraLogo = ref('/logos/aura_logo_black.png')
 let currentActiveTheme = null
 
+function updateDocumentThemeColor(color) {
+    if (typeof document === 'undefined') return
+    const themeMeta = document.querySelector('meta[name="theme-color"]')
+    if (themeMeta) {
+        themeMeta.setAttribute('content', color)
+    }
+}
+
 /**
  * School Theme Configuration
  * School IT can customize: primary accent color, logo, and school name.
@@ -241,4 +249,5 @@ export function applyTheme(theme) {
     // Automatically serve the correct Aura logo color based on banner contrast
     activeAuraLogo.value = resolveAuraLogoForBackground(theme.primaryColor)
     surfaceAuraLogo.value = resolveAuraLogoForBackground(surfaceColor)
+    updateDocumentThemeColor(bgColor)
 }
