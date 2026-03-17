@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
 from app.core.dependencies import get_db
+from app.models.school import School
 from app.models.user import User, UserRole
 from app.schemas.auth import TokenData
 from app.services.security_service import assert_session_valid
@@ -102,6 +103,45 @@ def ensure_user_has_any_role(
     return user
 
 
+def validate_user_account_state(db: Session, user: User) -> None:
+    if not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is inactive. Contact your administrator.",
+        )
+
+    role_names = get_normalized_user_roles(user)
+    if not role_names:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has no assigned role. Contact your administrator.",
+        )
+
+    school_id = getattr(user, "school_id", None)
+    is_platform_admin = "admin" in role_names and school_id is None
+    if is_platform_admin:
+        return
+
+    if school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not assigned to a school.",
+        )
+
+    school = db.query(School).filter(School.id == school_id).first()
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is assigned to a school that does not exist.",
+        )
+
+    if not getattr(school, "active_status", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account's school is inactive.",
+        )
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -110,13 +150,28 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
-    user = (
+def _normalize_login_identifier(identifier: str) -> str:
+    return identifier.strip().lower()
+
+
+def _auth_user_query(db: Session, email: str):
+    return (
         db.query(User)
-        .options(joinedload(User.roles).joinedload(UserRole.role))
-        .filter(User.email == email)
-        .first()
+        .options(
+            joinedload(User.roles).joinedload(UserRole.role),
+            joinedload(User.school).joinedload(School.settings),
+            joinedload(User.face_profile),
+        )
+        .filter(User.email == _normalize_login_identifier(email))
     )
+
+
+def get_user_for_login(db: Session, email: str) -> Optional[User]:
+    return _auth_user_query(db, email).first()
+
+
+def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
+    user = get_user_for_login(db, email)
 
     if not user or not verify_password(password, user.password_hash):
         return None
@@ -198,7 +253,7 @@ def _enforce_password_change_gate(user: User, request: Request) -> None:
     _raise_password_change_required()
 
 
-async def get_current_user(
+def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -207,7 +262,10 @@ async def get_current_user(
 
     user = (
         db.query(User)
-        .options(joinedload(User.roles).joinedload(UserRole.role))
+        .options(
+            joinedload(User.roles).joinedload(UserRole.role),
+            joinedload(User.school),
+        )
         .filter(User.email == token_data.email)
         .first()
     )
@@ -219,6 +277,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    validate_user_account_state(db, user)
     if not token_data.face_pending:
         assert_session_valid(db, token_jti=token_data.jti)
     _enforce_face_verification_gate(token_data, request)
@@ -226,7 +285,7 @@ async def get_current_user(
     return user
 
 
-async def get_current_user_with_roles(
+def get_current_user_with_roles(
     request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -238,6 +297,7 @@ async def get_current_user_with_roles(
         .options(
             joinedload(User.roles).joinedload(UserRole.role),
             joinedload(User.student_profile),
+            joinedload(User.school),
         )
         .filter(User.email == token_data.email)
         .first()
@@ -250,6 +310,7 @@ async def get_current_user_with_roles(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    validate_user_account_state(db, user)
     if not token_data.face_pending:
         assert_session_valid(db, token_jti=token_data.jti)
     _enforce_face_verification_gate(token_data, request)
@@ -262,7 +323,7 @@ def require_current_user_with_roles(
     *,
     detail: str,
 ) -> Callable[..., User]:
-    async def dependency(
+    def dependency(
         current_user: User = Depends(get_current_user_with_roles),
     ) -> User:
         return ensure_user_has_any_role(
@@ -295,7 +356,7 @@ def ensure_same_school(current_user: User, target_school_id: Optional[int]) -> N
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
 
 
-async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
     return ensure_user_has_any_role(
         current_user,
         ["admin"],
@@ -303,7 +364,7 @@ async def get_current_admin(current_user: User = Depends(get_current_user)) -> U
     )
 
 
-async def get_current_school_it(current_user: User = Depends(get_current_user_with_roles)) -> User:
+def get_current_school_it(current_user: User = Depends(get_current_user_with_roles)) -> User:
     return ensure_user_has_any_role(
         current_user,
         ["campus_admin", "school_IT", "school-it", "school_it"],
@@ -330,7 +391,7 @@ get_current_student_user = require_current_user_with_roles(
 )
 
 
-async def get_user_with_required_roles(
+def get_user_with_required_roles(
     required_roles: List[str],
     current_user: User = Depends(get_current_user_with_roles),
 ) -> User:

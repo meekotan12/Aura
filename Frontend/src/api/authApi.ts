@@ -6,6 +6,10 @@ import { clearGovernanceAccessCache } from "../hooks/useGovernanceAccess";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const PENDING_FACE_AUTH_KEY = "valid8.pendingFaceAuth";
 const PENDING_FACE_AUTH_TTL_MS = 15 * 60 * 1000;
+export const INACTIVE_SCHOOL_DETAIL = "This account's school is inactive.";
+const AUTH_STATUS_MESSAGE_KEY = "valid8.authStatusMessage";
+
+let authRedirectInProgress = false;
 
 const normalizeRoles = (roles: unknown): string[] => {
   if (!Array.isArray(roles)) return [];
@@ -18,6 +22,15 @@ const getStoredToken = () =>
   localStorage.getItem("authToken") ||
   localStorage.getItem("token") ||
   localStorage.getItem("access_token");
+
+const extractDetailMessage = (payload: unknown): string | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const detail = (payload as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail.trim().length > 0 ? detail : null;
+};
 
 const authHeaders = () => {
   const token = getStoredToken();
@@ -212,7 +225,10 @@ export const login = async (email: string, password: string) => {
       if (response.status === 401) {
         throw new Error('Incorrect email or password');
       }
-      throw new Error(`Network error: ${response.status}`);
+      const body = (await response.json().catch(() => null)) as unknown;
+      throw new Error(
+        extractDetailMessage(body) ?? `Network error: ${response.status}`
+      );
     }
 
     const data = (await response.json()) as AuthResponseBody;
@@ -268,6 +284,33 @@ export const logout = () => {
   clearPendingFaceAuthSession();
   clearStudentFaceEnrollmentState();
   clearBranding();
+};
+
+export const handleInactiveSchoolSession = (detail: unknown): boolean => {
+  if (detail !== INACTIVE_SCHOOL_DETAIL || !getStoredToken()) {
+    return false;
+  }
+
+  if (authRedirectInProgress) {
+    return true;
+  }
+
+  authRedirectInProgress = true;
+  sessionStorage.setItem(AUTH_STATUS_MESSAGE_KEY, INACTIVE_SCHOOL_DETAIL);
+  logout();
+  window.location.replace("/login");
+  return true;
+};
+
+export const consumeAuthStatusMessage = (): string | null => {
+  const message = sessionStorage.getItem(AUTH_STATUS_MESSAGE_KEY);
+  if (!message) {
+    return null;
+  }
+
+  sessionStorage.removeItem(AUTH_STATUS_MESSAGE_KEY);
+  authRedirectInProgress = false;
+  return message;
 };
 
 export const changePassword = async (currentPassword: string, newPassword: string) => {

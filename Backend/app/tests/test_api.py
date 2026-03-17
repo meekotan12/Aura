@@ -1,6 +1,7 @@
+import json
 from datetime import datetime, timedelta
 
-from app.models import Event, School, SchoolSetting, User, Role, UserRole
+from app.models import Event, School, SchoolAuditLog, SchoolSetting, User, Role, UserRole
 from app.core.security import create_access_token, verify_password
 from app.utils.passwords import hash_password_bcrypt
 
@@ -15,6 +16,49 @@ def _create_school(test_db, *, code: str) -> School:
     test_db.add(school)
     test_db.commit()
     return school
+
+
+def _get_or_create_role(test_db, *, name: str) -> Role:
+    role = test_db.query(Role).filter(Role.name == name).first()
+    if role is None:
+        role = Role(name=name)
+        test_db.add(role)
+        test_db.commit()
+    return role
+
+
+def _create_user_with_role(
+    test_db,
+    *,
+    email: str,
+    role_name: str,
+    password: str,
+    school_id: int | None = None,
+    first_name: str = "Test",
+    last_name: str = "User",
+    must_change_password: bool = False,
+    is_active: bool = True,
+) -> User:
+    role = _get_or_create_role(test_db, name=role_name)
+    user = User(
+        email=email,
+        school_id=school_id,
+        first_name=first_name,
+        last_name=last_name,
+        must_change_password=must_change_password,
+        is_active=is_active,
+    )
+    user.set_password(password)
+    test_db.add(user)
+    test_db.commit()
+
+    test_db.add(UserRole(user_id=user.id, role_id=role.id))
+    test_db.commit()
+    return user
+
+
+def _auth_headers(user: User) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token({'sub': user.email})}"}
 
 
 def test_create_user_api_requires_auth(client):
@@ -75,12 +119,14 @@ def test_user_authentication(client, test_db):
 
 
 def test_protected_endpoint(client, test_db):
+    school = _create_school(test_db, code="PROTECTED-SCH")
     role = Role(name="student")
     test_db.add(role)
     test_db.commit()
 
     user = User(
         email="student@example.com",
+        school_id=school.id,
         first_name="Student",
         last_name="Test",
         must_change_password=False,
@@ -105,6 +151,393 @@ def test_protected_endpoint(client, test_db):
 
     response = client.get("/users/me/")
     assert response.status_code == 401
+
+
+def test_health_endpoint_reports_pool_status(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["database"]["ok"] is True
+    assert "pool" in payload
+    assert "pool_class" in payload["pool"]
+
+
+def test_student_login_rejects_inactive_school(client, test_db):
+    school = _create_school(test_db, code="AUTH-INACTIVE-SCH")
+    school.active_status = False
+    test_db.commit()
+
+    role = Role(name="student")
+    test_db.add(role)
+    test_db.commit()
+
+    user = User(
+        email="inactive.school.student@example.com",
+        school_id=school.id,
+        first_name="Inactive",
+        last_name="Student",
+        must_change_password=False,
+    )
+    user.set_password("StudentPass123!")
+    test_db.add(user)
+    test_db.commit()
+
+    test_db.add(UserRole(user_id=user.id, role_id=role.id))
+    test_db.commit()
+
+    response = client.post(
+        "/login",
+        json={
+            "email": "inactive.school.student@example.com",
+            "password": "StudentPass123!",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This account's school is inactive."
+
+
+def test_protected_endpoint_rejects_student_from_inactive_school(client, test_db):
+    school = _create_school(test_db, code="AUTH-INACTIVE-SESSION")
+
+    role = Role(name="student")
+    test_db.add(role)
+    test_db.commit()
+
+    user = User(
+        email="inactive.session.student@example.com",
+        school_id=school.id,
+        first_name="Inactive",
+        last_name="Session",
+        must_change_password=False,
+    )
+    user.set_password("StudentPass123!")
+    test_db.add(user)
+    test_db.commit()
+
+    test_db.add(UserRole(user_id=user.id, role_id=role.id))
+    test_db.commit()
+
+    token = create_access_token({"sub": user.email})
+
+    school.active_status = False
+    test_db.commit()
+
+    response = client.get(
+        "/users/me/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This account's school is inactive."
+
+
+def test_deactivating_campus_admin_syncs_school_lockout_and_blocks_students(client, test_db):
+    school = _create_school(test_db, code="CAMPUS-LOCKOUT")
+    admin_user = _create_user_with_role(
+        test_db,
+        email="platform.lockout.admin@example.com",
+        role_name="admin",
+        password="AdminPass123!",
+        first_name="Platform",
+        last_name="Admin",
+    )
+    primary_campus_admin = _create_user_with_role(
+        test_db,
+        email="primary.lockout.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Primary",
+        last_name="Campus",
+    )
+    secondary_campus_admin = _create_user_with_role(
+        test_db,
+        email="secondary.lockout.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Secondary",
+        last_name="Campus",
+    )
+    student = _create_user_with_role(
+        test_db,
+        email="lockout.student@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+        first_name="Lockout",
+        last_name="Student",
+    )
+
+    student_token = create_access_token({"sub": student.email})
+
+    response = client.patch(
+        f"/api/school/admin/school-it-accounts/{primary_campus_admin.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"is_active": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+
+    test_db.refresh(primary_campus_admin)
+    test_db.refresh(secondary_campus_admin)
+    test_db.refresh(school)
+    assert primary_campus_admin.is_active is False
+    assert secondary_campus_admin.is_active is False
+    assert school.active_status is False
+
+    login_response = client.post(
+        "/login",
+        json={"email": student.email, "password": "StudentPass123!"},
+    )
+    assert login_response.status_code == 403
+    assert login_response.json()["detail"] == "This account's school is inactive."
+
+    protected_response = client.get(
+        "/users/me/",
+        headers={"Authorization": f"Bearer {student_token}"},
+    )
+    assert protected_response.status_code == 403
+    assert protected_response.json()["detail"] == "This account's school is inactive."
+
+    audit_log = (
+        test_db.query(SchoolAuditLog)
+        .filter(
+            SchoolAuditLog.school_id == school.id,
+            SchoolAuditLog.action == "school_it_status_update",
+        )
+        .order_by(SchoolAuditLog.id.desc())
+        .first()
+    )
+    assert audit_log is not None
+    audit_details = json.loads(audit_log.details)
+    assert audit_details["school_active_status"] is False
+    assert {item["user_id"] for item in audit_details["synced_school_it_accounts"]} == {
+        primary_campus_admin.id,
+        secondary_campus_admin.id,
+    }
+
+
+def test_reactivating_campus_admin_reactivates_school_and_restores_student_login(client, test_db):
+    school = _create_school(test_db, code="CAMPUS-REACT")
+    admin_user = _create_user_with_role(
+        test_db,
+        email="platform.reactivate.admin@example.com",
+        role_name="admin",
+        password="AdminPass123!",
+        first_name="Platform",
+        last_name="Admin",
+    )
+    primary_campus_admin = _create_user_with_role(
+        test_db,
+        email="primary.reactivate.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Primary",
+        last_name="Campus",
+    )
+    secondary_campus_admin = _create_user_with_role(
+        test_db,
+        email="secondary.reactivate.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Secondary",
+        last_name="Campus",
+    )
+    student = _create_user_with_role(
+        test_db,
+        email="reactivate.student@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+        first_name="Reactivate",
+        last_name="Student",
+    )
+
+    deactivate_response = client.patch(
+        f"/api/school/admin/school-it-accounts/{primary_campus_admin.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"is_active": False},
+    )
+    assert deactivate_response.status_code == 200
+
+    reactivate_response = client.patch(
+        f"/api/school/admin/school-it-accounts/{primary_campus_admin.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"is_active": True},
+    )
+
+    assert reactivate_response.status_code == 200
+    assert reactivate_response.json()["is_active"] is True
+
+    test_db.refresh(primary_campus_admin)
+    test_db.refresh(secondary_campus_admin)
+    test_db.refresh(school)
+    assert primary_campus_admin.is_active is True
+    assert secondary_campus_admin.is_active is True
+    assert school.active_status is True
+
+    login_response = client.post(
+        "/token",
+        data={"username": student.email, "password": "StudentPass123!"},
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["token_type"] == "bearer"
+    assert login_response.json()["access_token"]
+
+
+def test_school_status_syncs_all_campus_admin_accounts_and_preserves_subscription_only_updates(
+    client, test_db
+):
+    school = _create_school(test_db, code="SCHOOL-SYNC")
+    admin_user = _create_user_with_role(
+        test_db,
+        email="platform.schoolsync.admin@example.com",
+        role_name="admin",
+        password="AdminPass123!",
+        first_name="Platform",
+        last_name="Admin",
+    )
+    primary_campus_admin = _create_user_with_role(
+        test_db,
+        email="primary.schoolsync.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Primary",
+        last_name="Campus",
+    )
+    secondary_campus_admin = _create_user_with_role(
+        test_db,
+        email="secondary.schoolsync.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Secondary",
+        last_name="Campus",
+    )
+
+    deactivate_response = client.patch(
+        f"/api/school/admin/{school.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"active_status": False},
+    )
+    assert deactivate_response.status_code == 200
+    assert deactivate_response.json()["active_status"] is False
+
+    test_db.refresh(primary_campus_admin)
+    test_db.refresh(secondary_campus_admin)
+    test_db.refresh(school)
+    assert primary_campus_admin.is_active is False
+    assert secondary_campus_admin.is_active is False
+    assert school.active_status is False
+
+    deactivate_audit_log = (
+        test_db.query(SchoolAuditLog)
+        .filter(
+            SchoolAuditLog.school_id == school.id,
+            SchoolAuditLog.action == "school_status_update",
+        )
+        .order_by(SchoolAuditLog.id.desc())
+        .first()
+    )
+    assert deactivate_audit_log is not None
+    deactivate_audit_details = json.loads(deactivate_audit_log.details)
+    assert deactivate_audit_details["active_status"] is False
+    assert {item["user_id"] for item in deactivate_audit_details["synced_school_it_accounts"]} == {
+        primary_campus_admin.id,
+        secondary_campus_admin.id,
+    }
+
+    reactivate_response = client.patch(
+        f"/api/school/admin/{school.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"active_status": True},
+    )
+    assert reactivate_response.status_code == 200
+    assert reactivate_response.json()["active_status"] is True
+
+    test_db.refresh(primary_campus_admin)
+    test_db.refresh(secondary_campus_admin)
+    test_db.refresh(school)
+    assert primary_campus_admin.is_active is True
+    assert secondary_campus_admin.is_active is True
+    assert school.active_status is True
+
+    subscription_only_response = client.patch(
+        f"/api/school/admin/{school.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"subscription_status": "paid"},
+    )
+    assert subscription_only_response.status_code == 200
+    assert subscription_only_response.json()["subscription_status"] == "paid"
+
+    test_db.refresh(primary_campus_admin)
+    test_db.refresh(secondary_campus_admin)
+    test_db.refresh(school)
+    assert primary_campus_admin.is_active is True
+    assert secondary_campus_admin.is_active is True
+    assert school.subscription_status == "paid"
+
+
+def test_inactive_user_stays_blocked_after_school_reactivation(client, test_db):
+    school = _create_school(test_db, code="REACT-INACTIVE-USER")
+    admin_user = _create_user_with_role(
+        test_db,
+        email="platform.inactiveuser.admin@example.com",
+        role_name="admin",
+        password="AdminPass123!",
+        first_name="Platform",
+        last_name="Admin",
+    )
+    _create_user_with_role(
+        test_db,
+        email="campus.inactiveuser@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Campus",
+        last_name="Admin",
+    )
+    inactive_student = _create_user_with_role(
+        test_db,
+        email="inactive.after.reactivation@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+        first_name="Inactive",
+        last_name="Student",
+        is_active=False,
+    )
+
+    deactivate_response = client.patch(
+        f"/api/school/admin/{school.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"active_status": False},
+    )
+    assert deactivate_response.status_code == 200
+
+    reactivate_response = client.patch(
+        f"/api/school/admin/{school.id}/status",
+        headers=_auth_headers(admin_user),
+        json={"active_status": True},
+    )
+    assert reactivate_response.status_code == 200
+
+    login_response = client.post(
+        "/login",
+        json={
+            "email": inactive_student.email,
+            "password": "StudentPass123!",
+        },
+    )
+    assert login_response.status_code == 403
+    assert login_response.json()["detail"] == "This account is inactive. Contact your administrator."
 
 
 def test_create_event_api_uses_default_attendance_window_values(client, test_db):

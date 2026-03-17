@@ -1,7 +1,8 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { handleInactiveSchoolSession } from "./api/authApi";
 
 const Home = lazy(() => import("./components/Home"));
 const Unauthorized = lazy(() => import("./components/Unauthorized"));
@@ -74,6 +75,41 @@ const RouteLoader = () => (
 );
 
 const App = () => {
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async (...args: Parameters<typeof window.fetch>) => {
+      const response = await originalFetch(...args);
+
+      if (response.status === 403) {
+        const clonedResponse = response.clone();
+        let detail: unknown = null;
+
+        try {
+          const payload = await clonedResponse.json();
+          detail =
+            payload && typeof payload === "object"
+              ? (payload as { detail?: unknown }).detail ?? null
+              : null;
+        } catch {
+          try {
+            detail = await clonedResponse.text();
+          } catch {
+            detail = null;
+          }
+        }
+
+        handleInactiveSchoolSession(detail);
+      }
+
+      return response;
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <Suspense fallback={<RouteLoader />}>

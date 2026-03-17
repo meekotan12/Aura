@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 import uuid
 
-from fastapi import HTTPException, status
 from fastapi import Request
 from sqlalchemy.orm import Session
 
@@ -11,6 +10,7 @@ from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     canonicalize_role_name_for_storage,
     create_access_token,
+    validate_user_account_state,
 )
 from app.models.face_recognition import UserFaceRecognitionProfile
 from app.models.school import School, SchoolSetting
@@ -38,42 +38,7 @@ def get_user_role_names(user: User) -> list[str]:
 
 
 def validate_login_account_state(db: Session, user: User) -> None:
-    if not getattr(user, "is_active", True):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is inactive. Contact your administrator.",
-        )
-
-    role_names = get_user_role_names(user)
-    if not role_names:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has no assigned role. Contact your administrator.",
-        )
-
-    school_id = getattr(user, "school_id", None)
-    is_platform_admin = "admin" in role_names and school_id is None
-    if is_platform_admin:
-        return
-
-    if school_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is not assigned to a school.",
-        )
-
-    school = db.query(School).filter(School.id == school_id).first()
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is assigned to a school that does not exist.",
-        )
-
-    if not getattr(school, "active_status", True):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account's school is inactive.",
-        )
+    validate_user_account_state(db, user)
 
 
 def get_school_context(db: Session, user: User) -> dict[str, object | None]:
@@ -82,15 +47,19 @@ def get_school_context(db: Session, user: User) -> dict[str, object | None]:
         if school_id is None:
             return {}
 
-        school = db.query(School).filter(School.id == school_id).first()
+        school = getattr(user, "school", None)
+        if school is None:
+            school = db.query(School).filter(School.id == school_id).first()
         if school is None:
             return {}
 
-        settings = (
-            db.query(SchoolSetting)
-            .filter(SchoolSetting.school_id == school.id)
-            .first()
-        )
+        settings = getattr(school, "settings", None)
+        if settings is None:
+            settings = (
+                db.query(SchoolSetting)
+                .filter(SchoolSetting.school_id == school.id)
+                .first()
+            )
 
         return {
             "school_id": school.id,
@@ -135,7 +104,10 @@ def issue_full_access_token_response(
 ) -> dict[str, object | None]:
     role_names = get_user_role_names(user)
     school_context = get_school_context(db, user)
-    face_reference_enrolled = has_face_reference_enrolled(db, user.id)
+    face_reference_enrolled = (
+        getattr(user, "face_profile", None) is not None
+        or has_face_reference_enrolled(db, user.id)
+    )
     session_id = str(uuid.uuid4())
     token_jti = str(uuid.uuid4())
 
@@ -191,7 +163,10 @@ def issue_pending_face_token_response(
 ) -> dict[str, object | None]:
     role_names = get_user_role_names(user)
     school_context = get_school_context(db, user)
-    face_reference_enrolled = has_face_reference_enrolled(db, user.id)
+    face_reference_enrolled = (
+        getattr(user, "face_profile", None) is not None
+        or has_face_reference_enrolled(db, user.id)
+    )
 
     token_payload = {
         "sub": user.email,

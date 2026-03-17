@@ -146,6 +146,44 @@ def _get_school_it_role_or_500(db: Session) -> Role:
     )
 
 
+def _get_school_it_users_for_school(db: Session, school_id: int) -> list[User]:
+    return (
+        db.query(User)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            User.school_id == school_id,
+            Role.name.in_(get_role_lookup_names("campus_admin")),
+        )
+        .distinct()
+        .order_by(User.id.asc())
+        .all()
+    )
+
+
+def _sync_school_it_users_for_school(
+    db: Session,
+    *,
+    school_id: int,
+    is_active: bool,
+) -> list[User]:
+    school_it_users = _get_school_it_users_for_school(db, school_id)
+    for school_it_user in school_it_users:
+        school_it_user.is_active = is_active
+    return school_it_users
+
+
+def _serialize_school_it_users(school_it_users: list[User]) -> list[dict[str, object]]:
+    return [
+        {
+            "user_id": school_it_user.id,
+            "email": school_it_user.email,
+            "is_active": school_it_user.is_active,
+        }
+        for school_it_user in school_it_users
+    ]
+
+
 def _get_school_for_current_user_or_404(db: Session, current_user: User) -> School:
     school_id = getattr(current_user, "school_id", None)
     if school_id is None:
@@ -390,10 +428,25 @@ def admin_update_school_status(
     if school is None:
         raise HTTPException(status_code=404, detail="School not found.")
 
+    synced_school_it_users: list[User] = []
     if payload.active_status is not None:
         school.active_status = payload.active_status
+        synced_school_it_users = _sync_school_it_users_for_school(
+            db,
+            school_id=school.id,
+            is_active=payload.active_status,
+        )
     if payload.subscription_status is not None:
         school.subscription_status = payload.subscription_status.strip()
+
+    audit_details = {
+        "active_status": school.active_status,
+        "subscription_status": school.subscription_status,
+    }
+    if payload.active_status is not None:
+        audit_details["synced_school_it_accounts"] = _serialize_school_it_users(
+            synced_school_it_users
+        )
 
     _write_audit(
         db,
@@ -401,10 +454,7 @@ def admin_update_school_status(
         actor_user_id=current_user.id,
         action="school_status_update",
         status_value="success",
-        details={
-            "active_status": school.active_status,
-            "subscription_status": school.subscription_status,
-        },
+        details=audit_details,
     )
     db.commit()
     db.refresh(school)
@@ -457,27 +507,42 @@ def admin_update_school_it_status(
     if school_it_user is None:
         raise HTTPException(status_code=404, detail="Campus Admin account not found.")
 
-    school_it_user.is_active = is_active
-    db.commit()
-    db.refresh(school_it_user)
-
     school = None
+    synced_school_it_users = [school_it_user]
     if school_it_user.school_id is not None:
         school = db.query(School).filter(School.id == school_it_user.school_id).first()
-        if school:
-            _write_audit(
+        if school is not None:
+            school.active_status = is_active
+            synced_school_it_users = _sync_school_it_users_for_school(
                 db,
                 school_id=school.id,
-                actor_user_id=current_user.id,
-                action="school_it_status_update",
-                status_value="success",
-                details={
-                    "school_it_user_id": school_it_user.id,
-                    "school_it_email": school_it_user.email,
-                    "is_active": school_it_user.is_active,
-                },
+                is_active=is_active,
             )
-            db.commit()
+        else:
+            school_it_user.is_active = is_active
+    else:
+        school_it_user.is_active = is_active
+
+    if school is not None:
+        _write_audit(
+            db,
+            school_id=school.id,
+            actor_user_id=current_user.id,
+            action="school_it_status_update",
+            status_value="success",
+            details={
+                "school_it_user_id": school_it_user.id,
+                "school_it_email": school_it_user.email,
+                "is_active": is_active,
+                "school_active_status": school.active_status,
+                "synced_school_it_accounts": _serialize_school_it_users(
+                    synced_school_it_users
+                ),
+            },
+        )
+
+    db.commit()
+    db.refresh(school_it_user)
 
     return SchoolITAccountResponse(
         user_id=school_it_user.id,

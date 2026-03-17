@@ -13,6 +13,8 @@ This guide explains how the frontend should handle login, optional password-chan
 - `POST /users/` now honors a supplied password or returns `generated_temporary_password`
 - `POST /api/school/admin/create-school-it` now honors `school_it_password` or returns `generated_temporary_password`
 - protected backend routes now enforce server-side role guards before handler logic runs
+- protected backend routes also re-check inactive account and inactive school state on every authenticated request
+- deactivating or reactivating a Campus Admin through the admin school-account route now also deactivates or reactivates the whole school
 
 ## Frontend Decision Order After Login
 
@@ -144,6 +146,10 @@ Frontend rule:
 
 - never assume a hidden menu item is enough protection
 - handle `403` responses as expected role-enforcement behavior and route the user to a safe page
+- if the backend returns `This account's school is inactive.`, clear the local session and send the user back to login because the school was disabled after the token was issued
+- treat the same inactive-school response as valid after either:
+  - `PATCH /api/school/admin/{school_id}/status`
+  - `PATCH /api/school/admin/school-it-accounts/{user_id}/status`
 
 ## Example Login Responses
 
@@ -228,3 +234,5 @@ Frontend rule:
 7. Create a new user through `POST /users/` without a password and confirm the UI captures `generated_temporary_password`.
 8. Create a new user through `POST /users/` with a password and confirm the UI does not expect a generated password.
 9. Create a School IT account with and without `school_it_password` and confirm the credential handling matches the request.
+10. Deactivate a Campus Admin from the admin school-account route and confirm an already signed-in student is forced back to login after the next protected API call returns `This account's school is inactive.`
+11. Reactivate that Campus Admin and confirm a normal student login succeeds again without frontend changes.

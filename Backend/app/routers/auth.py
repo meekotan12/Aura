@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 from app.core.security import (
     PASSWORD_CHANGE_PROMPT_DISMISS_ENDPOINT,
     authenticate_user,
+    get_user_for_login,
     get_current_admin_or_campus_admin,
     get_current_application_user,
     has_any_role,
@@ -55,7 +56,7 @@ FORGOT_PASSWORD_GENERIC_MESSAGE = (
 )
 
 @router.post("/token", response_model=Token)
-async def login_for_access_token(
+def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
@@ -101,7 +102,7 @@ async def login_for_access_token(
     return response_payload
 
 @router.post("/login", response_model=Token)
-async def login_with_email(
+def login_with_email(
     request: Request,
     background_tasks: BackgroundTasks,
     login_data: LoginRequest,
@@ -208,18 +209,13 @@ async def login_with_email(
 
 
 @router.post("/auth/mfa/verify", response_model=Token)
-async def verify_mfa_and_login(
+def verify_mfa_and_login(
     request: Request,
     background_tasks: BackgroundTasks,
     payload: MfaChallengeVerifyRequest,
     db: Session = Depends(get_db),
 ):
-    user = (
-        db.query(User)
-        .options(joinedload(User.roles).joinedload(UserRole.role))
-        .filter(User.email == payload.email.strip().lower())
-        .first()
-    )
+    user = get_user_for_login(db, payload.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     validate_login_account_state(db, user)
@@ -261,7 +257,7 @@ async def verify_mfa_and_login(
 
 
 @router.post("/auth/change-password")
-async def change_password(
+def change_password(
     payload: ChangePasswordRequest,
     current_user: User = Depends(get_current_application_user),
     db: Session = Depends(get_db),
@@ -293,7 +289,7 @@ async def change_password(
 
 
 @router.post(PASSWORD_CHANGE_PROMPT_DISMISS_ENDPOINT)
-async def dismiss_password_change_prompt(
+def dismiss_password_change_prompt(
     current_user: User = Depends(get_current_application_user),
     db: Session = Depends(get_db),
 ):
@@ -303,7 +299,7 @@ async def dismiss_password_change_prompt(
 
 
 @router.post("/auth/forgot-password", response_model=ForgotPasswordRequestResponse)
-async def request_forgot_password(
+def request_forgot_password(
     payload: ForgotPasswordRequestCreate,
     db: Session = Depends(get_db),
 ):
@@ -349,7 +345,7 @@ async def request_forgot_password(
 
 
 @router.get("/auth/password-reset-requests", response_model=list[PasswordResetRequestItem])
-async def list_password_reset_requests(
+def list_password_reset_requests(
     current_user: User = Depends(get_current_admin_or_campus_admin),
     db: Session = Depends(get_db),
 ):
@@ -386,7 +382,7 @@ async def list_password_reset_requests(
 
 
 @router.post("/auth/password-reset-requests/{request_id}/approve", response_model=PasswordResetApprovalResponse)
-async def approve_password_reset_request(
+def approve_password_reset_request(
     request_id: int,
     current_user: User = Depends(get_current_admin_or_campus_admin),
     db: Session = Depends(get_db),

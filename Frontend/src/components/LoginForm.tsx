@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  consumeAuthStatusMessage,
   clearPendingFaceAuthSession,
   login,
   persistAuthSession,
@@ -39,10 +40,16 @@ const LoginForm = () => {
   const [mfaPending, setMfaPending] = useState<boolean>(false);
   const [mfaSubmitting, setMfaSubmitting] = useState<boolean>(false);
   const [mfaExpiresAt, setMfaExpiresAt] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { setBranding } = useUser();
 
   useEffect(() => {
+    const pendingAuthStatus = consumeAuthStatusMessage();
+    if (pendingAuthStatus) {
+      setAuthError(pendingAuthStatus);
+    }
+
     const savedEmail = localStorage.getItem("rememberedEmail");
     if (savedEmail) {
       setEmail(savedEmail);
@@ -90,6 +97,7 @@ const LoginForm = () => {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsLoading(true);
+    setAuthError(null);
     clearPendingFaceAuthSession();
 
     try {
@@ -104,7 +112,7 @@ const LoginForm = () => {
       }
       await continueLoginFlow(userData);
     } catch (error) {
-      alert(getErrorMessage(error, "Login failed! Please check your credentials."));
+      setAuthError(getErrorMessage(error, "Login failed! Please check your credentials."));
     } finally {
       setIsLoading(false);
     }
@@ -159,6 +167,8 @@ const LoginForm = () => {
       <h4 className="user-login-title">
         <FaUser className="user-icon" /> User Login
       </h4>
+
+      {authError && <p className="forgot-password-error">{authError}</p>}
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">

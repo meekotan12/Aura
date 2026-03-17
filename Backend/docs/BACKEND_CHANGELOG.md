@@ -14,6 +14,52 @@ At minimum include:
 - route or schema changes
 - migration or configuration impact
 
+## 2026-03-17 - Sync Campus Admin status with school lockout
+
+### Purpose
+
+Aligned Campus Admin account activation with school activation so disabling a Campus Admin now disables the whole school and re-enabling that Campus Admin restores the school for all otherwise-active school-scoped users.
+
+### Main files
+
+- `Backend/app/routers/school.py`
+- `Backend/app/tests/test_api.py`
+- `Backend/docs/BACKEND_FRONTEND_AUTH_ONBOARDING_GUIDE.md`
+
+### Backend changes
+
+- changed `PATCH /api/school/admin/school-it-accounts/{user_id}/status` so it now:
+  - updates the targeted Campus Admin account
+  - updates the linked `School.active_status`
+  - syncs every Campus Admin account in that same school to the same active state
+- changed `PATCH /api/school/admin/{school_id}/status` so `active_status` updates also sync all Campus Admin accounts in that school
+- kept `subscription_status`-only school updates from changing Campus Admin account activation
+- kept login and protected-route auth on the existing inactive-school guard, so blocked users still receive `This account's school is inactive.`
+- expanded school audit details to record the synchronized school and Campus Admin state
+
+### Route or schema impact
+
+- no request or response schema changes
+- runtime behavior change only for:
+  - `PATCH /api/school/admin/school-it-accounts/{user_id}/status`
+  - `PATCH /api/school/admin/{school_id}/status`
+
+### How to test
+
+1. Call `PATCH /api/school/admin/school-it-accounts/{user_id}/status` with `{"is_active": false}` for a Campus Admin account.
+2. Confirm the targeted Campus Admin and any other Campus Admin accounts in that school now have `is_active=false`.
+3. Confirm the linked school now has `active_status=false`.
+4. Try `POST /login` for a student in that school and confirm the response is `403` with `This account's school is inactive.`
+5. Use a previously issued token for a user in that school on `GET /users/me/` and confirm it also returns `403`.
+6. Call the same Campus Admin status route with `{"is_active": true}` and confirm the school plus all Campus Admin accounts return to active state.
+7. Call `PATCH /api/school/admin/{school_id}/status` with `{"active_status": false}` and then `{"active_status": true}` and confirm Campus Admin accounts stay synchronized both times.
+8. Call `PATCH /api/school/admin/{school_id}/status` with only `{"subscription_status": "paid"}` and confirm Campus Admin `is_active` values do not change.
+9. After reactivating the school, try logging in with a user whose own `is_active=false` and confirm the response still says `This account is inactive. Contact your administrator.`
+
+### Migration impact
+
+- no database migration required
+
 ## 2026-03-16 - Add production Docker release path and concurrent load-test harness
 
 ### Purpose
@@ -1993,6 +2039,80 @@ Improved geofence decision safety and reason codes for student attendance and ev
 - added recommended GPS accuracy helper
 
 ### Configuration impact
+
+- no database migration required
+
+## 2026-03-17 - Database pooling, login query reduction, and health telemetry
+
+### Purpose
+
+Hardened the FastAPI backend for login-heavy concurrency by replacing the tiny default SQLAlchemy pool, reducing repeated auth queries, and exposing pool diagnostics for production monitoring.
+
+### Main files
+
+- `Backend/app/core/config.py`
+- `Backend/app/core/database.py`
+- `Backend/app/core/security.py`
+- `Backend/app/services/auth_session.py`
+- `Backend/app/routers/auth.py`
+- `Backend/app/routers/health.py`
+- `Backend/app/main.py`
+- `Backend/app/tests/test_api.py`
+- `.env.example`
+- `Backend/docs/BACKEND_AUTH_LOGIN_PERFORMANCE_GUIDE.md`
+
+### Backend changes
+
+- added configurable DB pool settings:
+  - `DB_POOL_SIZE`
+  - `DB_MAX_OVERFLOW`
+  - `DB_POOL_TIMEOUT_SECONDS`
+  - `DB_POOL_RECYCLE_SECONDS`
+- set SQLAlchemy engine pooling explicitly with `pool_pre_ping`, `pool_use_lifo`, and `expire_on_commit=False`
+- added `get_database_pool_snapshot()` so runtime pool pressure can be inspected safely
+- added `GET /health` to report DB reachability and current pool usage
+- reduced login-path queries by eager-loading roles, school settings, and face profile in the auth lookup
+- converted login/auth dependency callables from `async def` to sync callables so synchronous SQLAlchemy and bcrypt work do not block FastAPI's event loop
+- reduced repeated school lookups by reusing eager-loaded school/settings data when available
+
+### How to test
+
+1. Set `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`, and `DB_POOL_RECYCLE_SECONDS` in your deployment environment.
+2. Start the backend and call `GET /health`; confirm the reported pool settings match the environment.
+3. Log in with a student account and confirm `POST /login` still returns a valid token.
+4. Log in with an admin or Campus Admin account and confirm MFA or face-pending behavior still works.
+5. Run a concurrent login test and watch `/health` while traffic is active; confirm pool utilization rises without immediate `QueuePool limit` failures.
+
+### Migration impact
+
+- no database migration required
+
+## 2026-03-17 - Deactivated schools now block all school-scoped sessions
+
+### Purpose
+
+Closed the gap where login rejected inactive schools, but already-issued student sessions could still access protected routes after a school was deactivated.
+
+### Main files
+
+- `Backend/app/core/security.py`
+- `Backend/app/services/auth_session.py`
+- `Backend/app/tests/test_api.py`
+
+### Backend changes
+
+- extracted shared account-state validation so login and protected-route auth use the same inactive-account and inactive-school guard
+- protected routes now reject school-scoped users when their school is inactive, even if their token was issued before the school was deactivated
+- platform admins without a school assignment remain allowed
+
+### How to test
+
+1. Deactivate a school through `PATCH /api/school/admin/{school_id}/status` with `active_status=false`.
+2. Try `POST /login` for a student or Campus Admin in that school and confirm the response is `403` with `This account's school is inactive.`
+3. Use a previously issued bearer token for a user in that school against a protected route such as `GET /users/me/` and confirm it now also returns `403`.
+4. Reactivate the school and confirm normal login works again for the same accounts.
+
+### Migration impact
 
 - no database migration required
 

@@ -20,6 +20,7 @@ from app.routers import (
     governance,
     governance_hierarchy,
     face_recognition,
+    health,
 )
 from pathlib import Path
 
@@ -52,6 +53,7 @@ app.include_router(subscription.router)
 app.include_router(governance.router)
 app.include_router(governance_hierarchy.router)
 app.include_router(face_recognition.router)
+app.include_router(health.router)
 
 logo_storage_dir = Path(settings.school_logo_storage_dir)
 logo_storage_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +75,7 @@ async def root():
             "notifications": "/api/notifications",
             "security": "/auth/security",
             "face": "/face",
+            "health": "/health",
             "subscription": "/api/subscription/me",
             "governance": "/api/governance/settings/me",
             "governance_hierarchy": "/api/governance/units",

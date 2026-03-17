@@ -15,6 +15,8 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - `Backend/app/workers/tasks.py`
 - `Backend/app/core/database.py`
 - `Backend/app/core/dependencies.py`
+- `Backend/app/core/security.py`
+- `Backend/app/routers/health.py`
 - `Backend/app/tests/test_auth_task_dispatcher.py`
 
 ## What Changed
@@ -32,6 +34,10 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - login responses now include `password_change_recommended` for one-time onboarding suggestions
 - new users can dismiss that suggestion through `POST /auth/password-change-prompt/dismiss` and continue to face onboarding
 - `/users/` creation responses now include `generated_temporary_password` when the backend generated the password, while still honoring a caller-supplied password when present
+- database pooling is now configurable with `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`, and `DB_POOL_RECYCLE_SECONDS`
+- auth handlers and auth dependencies now run as sync callables so synchronous SQLAlchemy and bcrypt work execute in FastAPI's threadpool instead of blocking the event loop
+- login eager-loads roles, school settings, and face profile in one query to reduce pool pressure
+- `GET /health` now reports database reachability plus current SQLAlchemy pool usage
 
 ## Request Flow
 
@@ -77,6 +83,81 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - email and notification side effects are the parts that moved off the request path
 - current Celery startup path is `app.workers.celery_app.celery_app`
 - the backend password stack is expected to use a `passlib`-compatible `bcrypt` release so login logs stay clean during password verification
+- current default pool capacity per process is `10 + 10 overflow`
+- `pool_recycle` defaults to `1800` seconds so stale Railway connections get refreshed before idle disconnects become request failures
+- `pool_use_lifo=True` helps burst traffic reuse hot connections instead of spreading churn evenly across the whole pool
+
+## Recommended Production Pooling
+
+Environment variables:
+
+- `DB_POOL_SIZE=10`
+- `DB_MAX_OVERFLOW=10`
+- `DB_POOL_TIMEOUT_SECONDS=15`
+- `DB_POOL_RECYCLE_SECONDS=1800`
+
+Use this capacity formula:
+
+- total potential DB connections = `worker_count * (DB_POOL_SIZE + DB_MAX_OVERFLOW)`
+
+Keep that total comfortably below your Railway Postgres connection limit, with headroom for migrations, admin sessions, and background jobs.
+
+## Railway Worker And Pool Balance
+
+These are safe starting points for login-heavy traffic. Adjust only after checking `GET /health`.
+
+| Railway shape | API workers | DB pool size | Max overflow | Max potential DB conns |
+| --- | ---: | ---: | ---: | ---: |
+| Small / shared CPU | 1 | 8 | 4 | 12 |
+| Medium | 2 | 8 | 4 | 24 |
+| Medium with heavier bursts | 2 | 10 | 5 | 30 |
+| Large | 3 | 10 | 5 | 45 |
+| Large dedicated | 4 | 10 | 5 | 60 |
+
+Guidelines:
+
+- if bcrypt CPU is the bottleneck, add workers before pushing pool sizes much higher
+- if the pool saturates but CPU stays low, increase pool size carefully
+- never raise workers and pool capacity at the same time without recalculating the total connection budget
+
+## Health Check
+
+`GET /health`
+
+Returns:
+
+- database reachability using `SELECT 1`
+- pool class
+- configured pool size
+- checked-in and checked-out connections
+- overflow connections
+- total connection capacity
+- utilization ratio
+
+Example response:
+
+```json
+{
+  "status": "ok",
+  "database": {
+    "ok": true,
+    "detail": null
+  },
+  "pool": {
+    "pool_class": "QueuePool",
+    "configured_pool_size": 10,
+    "max_overflow": 10,
+    "checked_in_connections": 7,
+    "checked_out_connections": 3,
+    "overflow_connections": 0,
+    "total_capacity": 20,
+    "available_slots": 17,
+    "pool_timeout_seconds": 15,
+    "pool_recycle_seconds": 1800,
+    "utilization_ratio": 0.15
+  }
+}
+```
 
 ## Temporary Password Policy
 
@@ -106,3 +187,5 @@ Recommended manual checks:
 9. For a privileged account, confirm `face_pending` onboarding still allows both `/auth/change-password` and `POST /auth/password-change-prompt/dismiss`.
 10. Approve a password reset and confirm the temporary reset password is still forced through `/auth/change-password`.
 11. On the forced password-change screen, submit the same temporary password used at login as `current_password` and confirm the change succeeds.
+12. Call `GET /health` and confirm the pool snapshot matches your configured `DB_POOL_*` values.
+13. Run a login-heavy load test and confirm `checked_out_connections` stays below total capacity most of the time.

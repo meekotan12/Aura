@@ -18,6 +18,10 @@ def _as_csv_list(value: str | None, default: list[str]) -> list[str]:
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_timeout_seconds: int
+    db_pool_recycle_seconds: int
     secret_key: str
     jwt_algorithm: str
     access_token_expire_minutes: int
@@ -61,6 +65,10 @@ def get_settings() -> Settings:
 
     return Settings(
         database_url=os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/fastapi_db"),
+        db_pool_size=max(1, int(os.getenv("DB_POOL_SIZE", "10"))),
+        db_max_overflow=max(0, int(os.getenv("DB_MAX_OVERFLOW", "10"))),
+        db_pool_timeout_seconds=max(1, int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "15"))),
+        db_pool_recycle_seconds=max(30, int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))),
         secret_key=os.getenv("SECRET_KEY", "change-this-secret-in-production"),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         access_token_expire_minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")),
