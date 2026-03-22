@@ -214,6 +214,37 @@ def test_student_login_rejects_inactive_school(client, test_db):
     assert response.json()["detail"] == "This account's school is inactive."
 
 
+def test_login_rejects_oversized_password_without_server_error(client, test_db):
+    school = _create_school(test_db, code="AUTH-LONG-PW")
+    user = _create_user_with_role(
+        test_db,
+        email="long.password.student@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+        first_name="Long",
+        last_name="Password",
+    )
+
+    response = client.post(
+        "/login",
+        json={
+            "email": user.email,
+            "password": "A" * 73,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect email or password"
+
+
+def test_verify_password_accepts_legacy_passlib_bcrypt_hashes():
+    legacy_hash = "$2b$12$59UOsRTJgmB5fRCpU0v9Wev8UFmxDMV9w8joJypWX8pmEqQzLRTiC"
+
+    assert verify_password("AuthPassword123!", legacy_hash) is True
+    assert verify_password("WrongPassword123!", legacy_hash) is False
+
+
 def test_protected_endpoint_rejects_student_from_inactive_school(client, test_db):
     school = _create_school(test_db, code="AUTH-INACTIVE-SESSION")
 

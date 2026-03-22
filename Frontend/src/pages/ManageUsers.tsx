@@ -64,6 +64,8 @@ enum RoleEnum {
   STUDENT = "student",
 }
 
+const USERS_PAGE_SIZE = 25;
+
 Modal.setAppElement("#root");
 
 const getStoredRoles = (): string[] => {
@@ -135,6 +137,9 @@ export const ManageUsers: React.FC = () => {
   const [editUserId, setEditUserId] = useState<number | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isUsersRefreshing, setIsUsersRefreshing] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
@@ -218,16 +223,33 @@ export const ManageUsers: React.FC = () => {
   };
 
   // Fetch users from API
-  const fetchUsers = async () => {
+  const fetchUsers = async (pageIndex = currentPage) => {
+    const safePageIndex = Math.max(pageIndex, 0);
+    if (!isLoading) {
+      setIsUsersRefreshing(true);
+    }
+
     try {
+      setError(null);
       // Use canonical collection URL to avoid redirect-induced CORS failures.
-      const response = await fetchWithAuth(`${API_URL}/`);
+      const response = await fetchWithAuth(
+        `${API_URL}/?skip=${safePageIndex * USERS_PAGE_SIZE}&limit=${USERS_PAGE_SIZE}`
+      );
       const data = await response.json();
+
+      if (safePageIndex > 0 && data.length === 0) {
+        setCurrentPage(safePageIndex - 1);
+        return;
+      }
+
       setUsers(data);
+      setHasNextPage(data.length === USERS_PAGE_SIZE);
       setIsLoading(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       setIsLoading(false);
+    } finally {
+      setIsUsersRefreshing(false);
     }
   };
 
@@ -250,8 +272,11 @@ export const ManageUsers: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchUsers();
-    fetchDepartmentsAndPrograms();
+    void fetchUsers(currentPage);
+  }, [currentPage]);
+
+  useEffect(() => {
+    void fetchDepartmentsAndPrograms();
   }, []);
 
   const getFullName = (user: User) => {
@@ -411,7 +436,7 @@ export const ManageUsers: React.FC = () => {
       }
 
       // Refresh the user list
-      await fetchUsers();
+      await fetchUsers(currentPage);
       setEditUserId(null);
       setEditProfileImage(null);
       setEditPreviewImage(null);
@@ -435,8 +460,13 @@ export const ManageUsers: React.FC = () => {
       });
 
       // Refresh the user list
-      await fetchUsers();
-      setDeleteUserId(null);
+      if (users.length === 1 && currentPage > 0) {
+        setDeleteUserId(null);
+        setCurrentPage((page) => Math.max(page - 1, 0));
+      } else {
+        await fetchUsers(currentPage);
+        setDeleteUserId(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete user");
     }
@@ -542,6 +572,8 @@ export const ManageUsers: React.FC = () => {
   const pageCopy = isSchoolIT
     ? "Review imported student accounts, keep academic records accurate, and route SSG assignments through the dedicated Manage SSG flow."
     : "Review school accounts, platform roles, and profile details with the same organized layout used in the governance setup screens.";
+  const pageStart = users.length === 0 ? 0 : currentPage * USERS_PAGE_SIZE + 1;
+  const pageEnd = currentPage * USERS_PAGE_SIZE + users.length;
 
   if (isLoading) {
     return (
@@ -600,7 +632,7 @@ export const ManageUsers: React.FC = () => {
                   <div className="col-sm-6">
                     <div className="manage-users-stat">
                       <span className="manage-users-stat__label">
-                        Total Users
+                        Users Loaded
                       </span>
                       <strong className="manage-users-stat__value">
                         {totalUsers}
@@ -610,7 +642,7 @@ export const ManageUsers: React.FC = () => {
                   <div className="col-sm-6">
                     <div className="manage-users-stat">
                       <span className="manage-users-stat__label">
-                        Active Accounts
+                        Active on Page
                       </span>
                       <strong className="manage-users-stat__value">
                         {activeUsers}
@@ -620,7 +652,7 @@ export const ManageUsers: React.FC = () => {
                   <div className="col-sm-6">
                     <div className="manage-users-stat">
                       <span className="manage-users-stat__label">
-                        Students
+                        Students on Page
                       </span>
                       <strong className="manage-users-stat__value">
                         {studentUsers}
@@ -630,7 +662,7 @@ export const ManageUsers: React.FC = () => {
                   <div className="col-sm-6">
                     <div className="manage-users-stat">
                       <span className="manage-users-stat__label">
-                        {isSchoolIT ? "Governance Roles" : "Leadership Roles"}
+                        {isSchoolIT ? "Governance on Page" : "Leadership on Page"}
                       </span>
                       <strong className="manage-users-stat__value">
                         {leadershipUsers}
@@ -650,7 +682,7 @@ export const ManageUsers: React.FC = () => {
               className="btn btn-sm btn-light manage-users-alert-action"
               onClick={() => {
                 setError(null);
-                void fetchUsers();
+                void fetchUsers(currentPage);
               }}
               type="button"
             >
@@ -680,11 +712,13 @@ export const ManageUsers: React.FC = () => {
                 </div>
 
                 <div className="manage-users-callout">
-                  <strong>{filteredUsers.length} users in view</strong>
+                  <strong>
+                    Page {currentPage + 1} | {filteredUsers.length} users in view
+                  </strong>
                   <p className="mb-0">
                     {searchTerm.trim()
-                      ? "Your results update live as you search across academic and governance details."
-                      : "Use the search field to narrow the directory by student record, role, email, or program."}
+                      ? "Your results update live as you search across academic and governance details on the current page."
+                      : "Use the search field to narrow the directory by student record, role, email, or program on the current page."}
                   </p>
                 </div>
               </div>
@@ -745,14 +779,14 @@ export const ManageUsers: React.FC = () => {
                   </div>
                   <div className="manage-users-inline-meta">
                     <span className="manage-users-inline-meta__pill">
-                      {filteredUsers.length} visible
+                      {isUsersRefreshing ? "Refreshing..." : `Page ${currentPage + 1}`}
                     </span>
                   </div>
                 </div>
 
                 {filteredUsers.length === 0 ? (
                   <div className="manage-users-empty-state">
-                    No matching users found. Try a different search term.
+                    No matching users found on this page. Try a different search term or move to another page.
                   </div>
                 ) : (
                   <div className="manage-users-table-wrap">
@@ -841,6 +875,36 @@ export const ManageUsers: React.FC = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {(users.length > 0 || currentPage > 0) && (
+                  <div className="manage-users-pagination">
+                    <div className="manage-users-pagination__summary">
+                      {users.length === 0
+                        ? `Page ${currentPage + 1} has no users.`
+                        : `Showing ${pageStart}-${pageEnd} on page ${currentPage + 1}`}
+                      {searchTerm.trim()
+                        ? ` | ${filteredUsers.length} match${filteredUsers.length === 1 ? "" : "es"} on this page`
+                        : ""}
+                    </div>
+                    <div className="manage-users-pagination__controls">
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={() => setCurrentPage((page) => Math.max(page - 1, 0))}
+                        disabled={currentPage === 0 || isUsersRefreshing}
+                        type="button"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={() => setCurrentPage((page) => page + 1)}
+                        disabled={!hasNextPage || isUsersRefreshing}
+                        type="button"
+                      >
+                        Next
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

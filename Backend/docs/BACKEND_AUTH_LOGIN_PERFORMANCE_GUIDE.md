@@ -16,6 +16,8 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - `Backend/app/core/database.py`
 - `Backend/app/core/dependencies.py`
 - `Backend/app/core/security.py`
+- `Backend/app/models/user.py`
+- `Backend/app/utils/passwords.py`
 - `Backend/app/routers/health.py`
 - `Backend/app/tests/test_auth_task_dispatcher.py`
 
@@ -34,6 +36,9 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - login responses now include `password_change_recommended` for one-time onboarding suggestions
 - new users can dismiss that suggestion through `POST /auth/password-change-prompt/dismiss` and continue to face onboarding
 - `/users/` creation responses now include `generated_temporary_password` when the backend generated the password, while still honoring a caller-supplied password when present
+- password hashing and verification now use shared `bcrypt` helpers directly instead of runtime `passlib` verification
+- existing stored bcrypt hashes remain valid even if they were originally generated through the older passlib-backed helper
+- oversized login-password attempts now return normal invalid-credential responses instead of bubbling bcrypt's 72-byte exception into a `500`
 - database pooling is now configurable with `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`, and `DB_POOL_RECYCLE_SECONDS`
 - auth handlers and auth dependencies now run as sync callables so synchronous SQLAlchemy and bcrypt work execute in FastAPI's threadpool instead of blocking the event loop
 - login eager-loads roles, school settings, and face profile in one query to reduce pool pressure
@@ -83,8 +88,9 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - login still records DB session and login-history data synchronously
 - email and notification side effects are the parts that moved off the request path
 - current Celery startup path is `app.workers.celery_app.celery_app`
-- the backend password stack is expected to use a `passlib`-compatible `bcrypt` release so login logs stay clean during password verification
-- the current auth runtime now relies on `verify_password()`, `User.set_password()`, `hash_password_bcrypt()`, and `require_current_user_with_roles()`; older unused helpers such as `get_password_hash()`, `ensure_same_school()`, and `get_user_with_required_roles()` were removed after confirming they were outside the live flow
+- the backend auth runtime now verifies passwords through shared `bcrypt.checkpw()` helpers, so login no longer depends on passlib's bcrypt backend initialization
+- login now treats bcrypt's `72`-byte input ceiling as a normal failed password check, so oversized passwords no longer crash `/login`, `/token`, or `/auth/change-password`
+- the current auth runtime now relies on `verify_password()`, `verify_password_bcrypt()`, `User.set_password()`, `User.check_password()`, `hash_password_bcrypt()`, and `require_current_user_with_roles()`; older unused helpers such as `get_password_hash()`, `ensure_same_school()`, and `get_user_with_required_roles()` were removed after confirming they were outside the live flow
 - current default pool capacity per process is `10 + 10 overflow`
 - `pool_recycle` defaults to `1800` seconds so stale Railway connections get refreshed before idle disconnects become request failures
 - `pool_use_lifo=True` helps burst traffic reuse hot connections instead of spreading churn evenly across the whole pool
@@ -183,7 +189,7 @@ Recommended manual checks:
 3. Complete `/auth/mfa/verify` and confirm the login still succeeds.
 4. If Celery is running, confirm login email/notification tasks appear in the worker.
 5. If Celery is unavailable, confirm login still returns and background-task fallback keeps the flow working.
-6. Confirm backend logs do not show a `bcrypt` compatibility traceback during login or password checks.
+6. Confirm backend logs do not show a password-verification traceback during login or password checks.
 7. Create a new onboarding account and confirm login returns `password_change_recommended=true` instead of forcing `/auth/change-password`.
 8. Call `POST /auth/password-change-prompt/dismiss` with that account and confirm the next login no longer recommends a password change.
 9. For a privileged account, confirm `face_pending` onboarding still allows both `/auth/change-password` and `POST /auth/password-change-prompt/dismiss`.
@@ -191,3 +197,5 @@ Recommended manual checks:
 11. On the forced password-change screen, submit the same temporary password used at login as `current_password` and confirm the change succeeds.
 12. Call `GET /health` and confirm the pool snapshot matches your configured `DB_POOL_*` values.
 13. Run a login-heavy load test and confirm `checked_out_connections` stays below total capacity most of the time.
+14. Submit a login attempt with a password longer than `72` bytes and confirm the API returns `401 Incorrect email or password` instead of `500`.
+15. Log in with an existing pre-change account and confirm the correct password still succeeds.

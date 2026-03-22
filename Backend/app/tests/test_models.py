@@ -83,6 +83,17 @@ def test_password_hashing(test_db):
     assert user.check_password(test_password) is True
     assert user.check_password("WrongPassword") is False
 
+
+def test_password_check_rejects_oversized_password_without_error(test_db):
+    user = User(
+        email="oversized@example.com",
+        first_name="Oversized",
+        last_name="Password",
+    )
+    user.set_password("SafePassword123!")
+
+    assert user.check_password("A" * 73) is False
+
 # For running directly without pytest
 if __name__ == "__main__":
     from app.core.database import SessionLocal

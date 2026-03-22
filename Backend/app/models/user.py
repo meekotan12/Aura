@@ -6,8 +6,8 @@ Role: Model layer. It maps Python objects to database tables and relationships.
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.models.base import Base
+from app.utils.passwords import hash_password_bcrypt, verify_password_bcrypt
 from datetime import datetime
-import bcrypt
 
 class User(Base):
     __tablename__ = "users"
@@ -33,13 +33,10 @@ class User(Base):
     def set_password(self, password: str):
         if len(password) < 8:
             raise ValueError("Password must be at least 8 characters")
-        self.password_hash = bcrypt.hashpw(
-            password.encode('utf-8'),
-            bcrypt.gensalt(rounds=12)
-        ).decode('utf-8')
+        self.password_hash = hash_password_bcrypt(password)
     
     def check_password(self, password: str) -> bool:
-        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
+        return verify_password_bcrypt(password, self.password_hash)
 
 class UserRole(Base):
     __tablename__ = "user_roles"

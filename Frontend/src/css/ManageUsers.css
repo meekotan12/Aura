@@ -179,6 +179,26 @@
   color: #6c757d;
 }
 
+.manage-users-pagination {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.manage-users-pagination__summary {
+  color: #5c6a80;
+  font-size: 0.92rem;
+}
+
+.manage-users-pagination__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .manage-users-table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -602,6 +622,12 @@
 
   .manage-users-action-row {
     flex-direction: column;
+  }
+
+  .manage-users-pagination,
+  .manage-users-pagination__controls {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .manage-users-page .btn,

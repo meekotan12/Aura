@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { FaDownload, FaFileExcel, FaUpload } from "react-icons/fa";
+import { FaDownload, FaFileExcel, FaRedoAlt, FaTrashAlt, FaUpload } from "react-icons/fa";
 
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 import {
   downloadImportErrors,
+  downloadPreviewImportErrors,
+  downloadPreviewRetryFile,
   downloadUserImportTemplate,
   getImportStatus,
   importUsersFromExcel,
   ImportPreviewSummary,
   previewImportUsersFromExcel,
+  removeInvalidPreviewRows,
   retryFailedImportRows,
   UserImportSummary,
 } from "../api/schoolSettingsApi";
@@ -22,6 +25,9 @@ const SchoolImportUsers = () => {
   const [downloadingErrors, setDownloadingErrors] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [downloadingPreviewErrors, setDownloadingPreviewErrors] = useState(false);
+  const [downloadingPreviewRetryFile, setDownloadingPreviewRetryFile] = useState(false);
+  const [cleaningPreview, setCleaningPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<UserImportSummary | null>(null);
   const [preview, setPreview] = useState<ImportPreviewSummary | null>(null);
@@ -82,6 +88,10 @@ const SchoolImportUsers = () => {
       setError("Preview the file first before importing.");
       return;
     }
+    if (!preview.preview_token) {
+      setError("Preview token is missing. Preview the file again before importing.");
+      return;
+    }
     if (!preview.can_commit) {
       setError("Fix preview errors before importing.");
       return;
@@ -92,7 +102,7 @@ const SchoolImportUsers = () => {
     setSummary(null);
 
     try {
-      const job = await importUsersFromExcel(selectedFile);
+      const job = await importUsersFromExcel(preview.preview_token);
       setJobId(job.job_id);
       startPolling(job.job_id);
     } catch (err) {
@@ -119,6 +129,53 @@ const SchoolImportUsers = () => {
       setError(err instanceof Error ? err.message : "Failed to preview file.");
     } finally {
       setPreviewing(false);
+    }
+  };
+
+  const handleDownloadPreviewErrors = async () => {
+    if (!preview?.preview_token) return;
+
+    setDownloadingPreviewErrors(true);
+    setError(null);
+    try {
+      await downloadPreviewImportErrors(preview.preview_token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download preview errors.");
+    } finally {
+      setDownloadingPreviewErrors(false);
+    }
+  };
+
+  const handleDownloadPreviewRetryFile = async () => {
+    if (!preview?.preview_token) return;
+
+    setDownloadingPreviewRetryFile(true);
+    setError(null);
+    try {
+      await downloadPreviewRetryFile(preview.preview_token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download preview retry file.");
+    } finally {
+      setDownloadingPreviewRetryFile(false);
+    }
+  };
+
+  const handleRemoveInvalidRows = async () => {
+    if (!preview?.preview_token) return;
+    if (preview.valid_rows <= 0) {
+      setError("Remove Invalid Rows needs at least one valid preview row to keep.");
+      return;
+    }
+
+    setCleaningPreview(true);
+    setError(null);
+    try {
+      const cleanedPreview = await removeInvalidPreviewRows(preview.preview_token);
+      setPreview(cleanedPreview);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove invalid preview rows.");
+    } finally {
+      setCleaningPreview(false);
     }
   };
 
@@ -152,6 +209,11 @@ const SchoolImportUsers = () => {
       setRetrying(false);
     }
   };
+
+  const canRemoveInvalidRows =
+    Boolean(preview?.preview_token) &&
+    (preview?.invalid_rows ?? 0) > 0 &&
+    (preview?.valid_rows ?? 0) > 0;
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f7fa" }}>
@@ -200,14 +262,14 @@ const SchoolImportUsers = () => {
               <button
                 className="btn btn-primary"
                 onClick={handleImport}
-                disabled={loading}
+                disabled={loading || previewing || !preview?.can_commit}
                 style={{
                   backgroundColor: "var(--primary-color, #162F65)",
                   borderColor: "var(--primary-color, #162F65)",
                 }}
               >
                 <FaUpload className="me-2" />
-                {loading ? "Processing..." : "Import Students"}
+                {loading ? "Processing..." : "Import Approved Rows"}
               </button>
             </div>
 
@@ -218,6 +280,52 @@ const SchoolImportUsers = () => {
                   {preview.total_rows}).
                   {!preview.can_commit && " Please fix invalid rows before importing."}
                 </div>
+
+                {preview.invalid_rows > 0 && preview.preview_token && (
+                  <div className="d-flex flex-wrap gap-2 mb-3">
+                    <button
+                      className="btn btn-outline-danger"
+                      onClick={handleDownloadPreviewErrors}
+                      disabled={downloadingPreviewErrors || cleaningPreview}
+                      type="button"
+                    >
+                      <FaDownload className="me-2" />
+                      {downloadingPreviewErrors ? "Downloading..." : "Download Errors"}
+                    </button>
+                    <button
+                      className="btn btn-outline-secondary"
+                      onClick={handleDownloadPreviewRetryFile}
+                      disabled={downloadingPreviewRetryFile || cleaningPreview}
+                      type="button"
+                    >
+                      <FaRedoAlt className="me-2" />
+                      {downloadingPreviewRetryFile ? "Preparing..." : "Retry File"}
+                    </button>
+                    <button
+                      className="btn btn-outline-primary"
+                      onClick={handleRemoveInvalidRows}
+                      disabled={cleaningPreview || !canRemoveInvalidRows}
+                      type="button"
+                    >
+                      <FaTrashAlt className="me-2" />
+                      {cleaningPreview ? "Removing..." : "Remove Invalid Rows"}
+                    </button>
+                  </div>
+                )}
+
+                {preview.invalid_rows > 0 && preview.valid_rows === 0 && (
+                  <div className="alert alert-secondary py-2">
+                    Remove Invalid Rows becomes available after the preview has at least one valid
+                    row to keep.
+                  </div>
+                )}
+
+                {preview.can_commit && (
+                  <div className="alert alert-success py-2">
+                    Approved preview is ready. Use <strong>Import Approved Rows</strong> to continue.
+                  </div>
+                )}
+
                 <div className="table-responsive">
                   <table className="table table-sm table-bordered align-middle">
                     <thead>

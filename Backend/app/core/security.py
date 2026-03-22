@@ -9,7 +9,6 @@ from typing import Callable, List, Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
@@ -18,13 +17,13 @@ from app.models.school import School
 from app.models.user import User, UserRole
 from app.schemas.auth import TokenData
 from app.services.security_service import assert_session_valid
+from app.utils.passwords import verify_password_bcrypt
 
 settings = get_settings()
 SECRET_KEY = settings.secret_key
 ALGORITHM = settings.jwt_algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="token",
     scopes={
@@ -148,7 +147,7 @@ def validate_user_account_state(db: Session, user: User) -> None:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return verify_password_bcrypt(plain_password, hashed_password)
 
 
 def _normalize_login_identifier(identifier: str) -> str:

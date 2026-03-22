@@ -58,6 +58,7 @@ export interface ImportPreviewSummary {
   valid_rows: number;
   invalid_rows: number;
   can_commit: boolean;
+  preview_token?: string | null;
   rows: ImportPreviewRow[];
 }
 
@@ -313,9 +314,9 @@ export const downloadUserImportTemplate = async (): Promise<void> => {
   window.URL.revokeObjectURL(url);
 };
 
-export const importUsersFromExcel = async (file: File): Promise<ImportJobCreateResponse> => {
+export const importUsersFromExcel = async (previewToken: string): Promise<ImportJobCreateResponse> => {
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("preview_token", previewToken);
 
   const response = await fetch(buildApiUrl("/api/admin/import-students"), {
     method: "POST",
@@ -361,6 +362,66 @@ export const getImportStatus = async (jobId: string): Promise<UserImportSummary>
   }
 
   return body as UserImportSummary;
+};
+
+export const downloadPreviewImportErrors = async (previewToken: string): Promise<void> => {
+  const response = await fetch(buildApiUrl(`/api/admin/import-preview-errors/${previewToken}/download`), {
+    method: "GET",
+    headers: withAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to download preview errors");
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `preview_errors_${previewToken}.xlsx`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+export const downloadPreviewRetryFile = async (previewToken: string): Promise<void> => {
+  const response = await fetch(buildApiUrl(`/api/admin/import-preview-errors/${previewToken}/retry-download`), {
+    method: "GET",
+    headers: withAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to download preview retry file");
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `preview_retry_${previewToken}.xlsx`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+export const removeInvalidPreviewRows = async (
+  previewToken: string
+): Promise<ImportPreviewSummary> => {
+  const response = await fetch(buildApiUrl(`/api/admin/import-preview-errors/${previewToken}/remove-invalid`), {
+    method: "POST",
+    headers: withAuthHeaders(),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.detail || "Failed to remove invalid preview rows");
+  }
+
+  return body as ImportPreviewSummary;
 };
 
 export const downloadImportErrors = async (jobId: string): Promise<void> => {

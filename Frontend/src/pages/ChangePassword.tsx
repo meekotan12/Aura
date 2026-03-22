@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { changePassword, logout } from "../api/authApi";
 import { resolvePostAuthenticationPath } from "../authFlow";
+import { primeGovernanceAccessCache } from "../hooks/useGovernanceAccess";
 
 const hasStrongPassword = (password: string): boolean =>
   /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password);
@@ -30,6 +31,20 @@ const ChangePassword = () => {
     }
   }, []);
 
+  const resolveNextPath = async (
+    roles: string[],
+    authToken: string | null,
+    userId: number | null
+  ) => {
+    await primeGovernanceAccessCache(true);
+    return resolvePostAuthenticationPath({
+      roles,
+      mustChangePassword: false,
+      authToken,
+      userId,
+    });
+  };
+
   useEffect(() => {
     if (!token || !storedUser) {
       navigate("/", { replace: true });
@@ -39,12 +54,11 @@ const ChangePassword = () => {
     if (!needsPasswordChange) {
       let cancelled = false;
       const redirectToResolvedPath = async () => {
-        const nextPath = await resolvePostAuthenticationPath({
-          roles: storedUser.roles || [],
-          mustChangePassword: false,
-          authToken: token,
-          userId: typeof storedUser.id === "number" ? storedUser.id : null,
-        });
+        const nextPath = await resolveNextPath(
+          storedUser.roles || [],
+          token,
+          typeof storedUser.id === "number" ? storedUser.id : null
+        );
         if (!cancelled) {
           navigate(nextPath, { replace: true });
         }
@@ -83,12 +97,11 @@ const ChangePassword = () => {
     }
 
     if (!(storedUser?.mustChangePassword || storedUser?.must_change_password)) {
-      const nextPath = await resolvePostAuthenticationPath({
-        roles: storedUser?.roles || [],
-        mustChangePassword: false,
-        authToken: token,
-        userId: typeof storedUser?.id === "number" ? storedUser.id : null,
-      });
+      const nextPath = await resolveNextPath(
+        storedUser?.roles || [],
+        token,
+        typeof storedUser?.id === "number" ? storedUser.id : null
+      );
       navigate(nextPath, { replace: true });
       return;
     }
@@ -106,12 +119,11 @@ const ChangePassword = () => {
 
       setSuccess("Password changed successfully. Redirecting...");
       window.setTimeout(async () => {
-        const nextPath = await resolvePostAuthenticationPath({
-          roles: updatedUser.roles || [],
-          mustChangePassword: false,
-          authToken: token,
-          userId: typeof updatedUser.id === "number" ? updatedUser.id : null,
-        });
+        const nextPath = await resolveNextPath(
+          updatedUser.roles || [],
+          token,
+          typeof updatedUser.id === "number" ? updatedUser.id : null
+        );
         navigate(nextPath, { replace: true });
       }, 700);
     } catch (err) {

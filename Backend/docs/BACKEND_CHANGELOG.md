@@ -14,6 +14,67 @@ At minimum include:
 - route or schema changes
 - migration or configuration impact
 
+## 2026-03-22 - Restore landing-page public kiosk and stabilize bcrypt login checks
+
+### Purpose
+
+Fixed the login flow so bcrypt-backed verification no longer depends on the broken live `passlib` + `bcrypt 5.x` combination, kept oversized passwords from crashing auth, and restored the public face-attendance kiosk on the landing page so the shipped backend public-attendance routes are reachable from the UI.
+
+### Main files
+
+- `Backend/app/core/security.py`
+- `Backend/app/models/user.py`
+- `Backend/app/utils/passwords.py`
+- `Backend/app/tests/test_api.py`
+- `Backend/app/tests/test_models.py`
+- `Frontend/src/api/publicAttendanceApi.ts`
+- `Frontend/src/components/PublicAttendanceKiosk.tsx`
+- `Frontend/src/css/PublicAttendanceKiosk.css`
+- `Frontend/src/components/Home.tsx`
+- `Frontend/src/components/LoginForm.tsx`
+- `Frontend/src/App.css`
+- `Backend/docs/BACKEND_AUTH_LOGIN_PERFORMANCE_GUIDE.md`
+- `Backend/docs/BACKEND_CHANGELOG.md`
+
+### Backend changes
+
+- changed `verify_password()` and shared password helpers to use `bcrypt.checkpw()` directly instead of runtime `passlib` verification
+- unified `User.set_password()`, `User.check_password()`, and `hash_password_bcrypt()` on the same bcrypt-only helper path so live login, password resets, and generated passwords use one compatible implementation
+- kept support for existing stored bcrypt hashes, including hashes originally created through the older passlib-backed helper
+- kept the existing auth contract so `/login`, `/token`, and `/auth/change-password` stay on their normal invalid-credential path instead of crashing
+- added regression coverage for oversized password checks and legacy bcrypt-hash verification compatibility
+
+### Frontend behavior impact
+
+- the landing page now renders a public face-attendance kiosk beneath the login panel
+- the kiosk discovers nearby geofenced events from the browser's current GPS position, lets the operator select one event, and streams multi-face scans against the backend public-attendance APIs
+- the login form now accepts passwords up to `255` characters instead of truncating at `30`
+
+### Route or schema changes
+
+- no API route changes
+- no schema changes
+
+### Configuration impact
+
+- no new environment variables
+- `PUBLIC_ATTENDANCE_ENABLED` still controls whether the kiosk routes respond; the landing-page UI now surfaces backend disabled or location errors directly
+
+### Migration impact
+
+- no new database migration file
+
+### How to test
+
+1. Run `Backend\\.venv\\Scripts\\python.exe -m pytest -q Backend/app/tests/test_api.py -k oversized_password`.
+2. Run `Backend\\.venv\\Scripts\\python.exe -m pytest -q Backend/app/tests/test_api.py -k legacy_passlib`.
+3. Run `Backend\\.venv\\Scripts\\python.exe -m pytest -q Backend/app/tests/test_models.py -k oversized_password`.
+4. Run `npm run build` from `Frontend/`.
+5. Open `/login`, allow geolocation, and confirm nearby public attendance events load in the kiosk.
+6. Select a nearby event, start the camera, arm the live scan, and confirm scan outcomes appear without logging the student into the app.
+7. Log in with a known-good existing account and confirm the API now accepts the correct password again.
+8. Submit a login attempt with a password longer than `72` bytes and confirm the UI no longer shows `Network error: 500`.
+
 ## 2026-03-22 - Consolidate Docker deployment into one compose file
 
 ### Purpose

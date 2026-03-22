@@ -200,7 +200,7 @@ const LoginForm = () => {
               required
               placeholder="Enter your password"
               minLength={8}
-              maxLength={30}
+              maxLength={255}
             />
             <button
               type="button"
