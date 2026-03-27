@@ -20,6 +20,7 @@ Valid8 Attendance Recognition System (Dockerized full stack).
 - Attendance status guide: `Backend/docs/BACKEND_ATTENDANCE_STATUS_GUIDE.md`
 - Event time status guide: `Backend/docs/BACKEND_EVENT_TIME_STATUS_GUIDE.md`
 - Event auto status guide: `Backend/docs/BACKEND_EVENT_AUTO_STATUS_GUIDE.md`
+- Google email delivery guide: `Backend/docs/BACKEND_GOOGLE_EMAIL_DELIVERY_GUIDE.md`
 
 ## Quick Start
 1. Install Docker Desktop.
@@ -35,7 +36,7 @@ docker compose up --build
 - pgAdmin: `http://localhost:5050`
 
 ## Environment Notes
-- SMTP example values are in `.env.smtp.example`.
+- Backend mail example values are in `Backend/.env.example`.
 - Frontend API URL is configured in `Frontend/.env` (`VITE_API_URL`).
 - Compose defaults backend DB/Celery settings for local Docker networking.
 - Event auto-status scheduler can be configured with `EVENT_STATUS_SYNC_ENABLED` and `EVENT_STATUS_SYNC_INTERVAL_SECONDS`.

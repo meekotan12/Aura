@@ -6,6 +6,7 @@ import {
   GovernanceUnitType,
 } from "../api/governanceHierarchyApi";
 import { useGovernanceAccess } from "../hooks/useGovernanceAccess";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import { sanitizeRedirectPath } from "../utils/redirects";
 import { normalizeRole } from "../utils/roleUtils";
 
@@ -21,13 +22,11 @@ const ProtectedRoute = ({
   redirectTo?: string;
 }) => {
   const location = useLocation();
-  const [storedUser, setStoredUser] = useState<string | null>(() =>
-    localStorage.getItem("user")
-  );
+  const [storedUser, setStoredUser] = useState(() => readStoredUserSession());
 
   useEffect(() => {
     const syncStoredUser = () => {
-      setStoredUser(localStorage.getItem("user"));
+      setStoredUser(readStoredUserSession());
     };
 
     window.addEventListener("storage", syncStoredUser);
@@ -41,22 +40,9 @@ const ProtectedRoute = ({
     };
   }, []);
 
-  const user = useMemo(() => {
-    if (!storedUser) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(storedUser);
-    } catch (error) {
-      console.error("Error parsing user data:", error);
-      return null;
-    }
-  }, [storedUser]);
-
   const userRoles = useMemo(
-    () => (Array.isArray(user?.roles) ? user.roles.map(normalizeRole) : []),
-    [user]
+    () => storedUser?.roles.map(normalizeRole) ?? [],
+    [storedUser]
   );
   const allowed = useMemo(() => allowedRoles.map(normalizeRole), [allowedRoles]);
   const safeRedirectTo = useMemo(
@@ -69,17 +55,17 @@ const ProtectedRoute = ({
   const governanceAccess = useGovernanceAccess({
     enabled: requiresGovernanceAccess && Boolean(storedUser) && userRoles.length > 0,
   });
-  const mustChangePassword = Boolean(user?.mustChangePassword || user?.must_change_password);
+  const mustChangePassword = Boolean(storedUser?.mustChangePassword);
 
   const requiresStudentFaceEnrollment =
     userRoles.includes("student") &&
-    isStudentFaceEnrollmentRequired(typeof user?.id === "number" ? user.id : null);
+    isStudentFaceEnrollmentRequired(storedUser?.id ?? null);
 
   if (!storedUser) {
     return <Navigate to="/" replace />;
   }
 
-  if (!user || !Array.isArray(user.roles)) {
+  if (!Array.isArray(storedUser.roles)) {
     return <Navigate to="/" replace />;
   }
 

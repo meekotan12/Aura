@@ -19,7 +19,7 @@ class Base64ImageRequest(BaseModel):
 
 class FaceRegistrationResponse(BaseModel):
     message: str
-    student_id: str
+    student_id: Optional[str] = None
     liveness: dict[str, object]
 
 
@@ -33,8 +33,9 @@ class FaceVerificationResponse(BaseModel):
     liveness: dict[str, object]
 
 
-class FaceAttendanceScanRequest(Base64ImageRequest):
+class FaceAttendanceScanRequest(BaseModel):
     event_id: int = Field(gt=0)
+    image_base64: Optional[str] = Field(default=None, min_length=32)
     latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     accuracy_m: Optional[float] = Field(default=None, gt=0, le=5000)

@@ -115,6 +115,10 @@ def normalize_sign_out_grace_minutes(value: Any) -> int:
     return normalize_window_minutes(value)
 
 
+def normalize_sign_out_open_delay_minutes(value: Any) -> int:
+    return normalize_window_minutes(value)
+
+
 def get_check_in_opens_at(
     start_time: datetime,
     early_check_in_minutes: Any = 0,
@@ -145,17 +149,34 @@ def get_normal_sign_out_close_time(
     )
 
 
+def get_sign_out_open_time(
+    end_time: datetime,
+    sign_out_open_delay_minutes: Any = 0,
+    timezone_name: str = DEFAULT_EVENT_TIMEZONE,
+) -> datetime:
+    return normalize_event_datetime(end_time, timezone_name) + timedelta(
+        minutes=normalize_sign_out_open_delay_minutes(sign_out_open_delay_minutes)
+    )
+
+
 def get_effective_sign_out_close_time(
     end_time: datetime,
     sign_out_grace_minutes: Any = 0,
     sign_out_override_until: datetime | None = None,
     timezone_name: str = DEFAULT_EVENT_TIMEZONE,
 ) -> datetime:
-    return get_normal_sign_out_close_time(
+    normal_close_time = get_normal_sign_out_close_time(
         end_time,
         sign_out_grace_minutes,
         timezone_name=timezone_name,
     )
+    localized_override = normalize_optional_event_datetime(
+        sign_out_override_until,
+        timezone_name,
+    )
+    if localized_override is None:
+        return normal_close_time
+    return min(normal_close_time, localized_override)
 
 
 def resolve_attendance_window_cutoffs(
@@ -207,6 +228,7 @@ def get_event_status(
     early_check_in_minutes: Any = 0,
     late_threshold_minutes: Any = 0,
     sign_out_grace_minutes: Any = 0,
+    sign_out_open_delay_minutes: Any = 0,
     sign_out_override_until: datetime | None = None,
     present_until_override_at: datetime | None = None,
     late_until_override_at: datetime | None = None,
@@ -241,7 +263,11 @@ def get_event_status(
         late_until_override_at=late_until_override_at,
         timezone_name=timezone_name,
     )
-    sign_out_opens_at = localized_end
+    sign_out_opens_at = get_sign_out_open_time(
+        localized_end,
+        sign_out_open_delay_minutes,
+        timezone_name=timezone_name,
+    )
     normal_sign_out_closes_at = get_normal_sign_out_close_time(
         localized_end,
         sign_out_grace_minutes,
@@ -258,11 +284,13 @@ def get_event_status(
         event_status = "before_check_in"
     elif localized_now < localized_start:
         event_status = "early_check_in"
-    elif localized_now >= localized_end:
+    elif localized_now >= sign_out_opens_at:
         if localized_now <= effective_sign_out_closes_at:
             event_status = "sign_out_open"
         else:
             event_status = "closed"
+    elif localized_now >= localized_end:
+        event_status = "sign_out_pending"
     elif localized_now <= late_threshold_time:
         event_status = "late_check_in"
     else:
@@ -323,6 +351,7 @@ def get_attendance_decision(
     early_check_in_minutes: Any = 0,
     late_threshold_minutes: Any = 0,
     sign_out_grace_minutes: Any = 0,
+    sign_out_open_delay_minutes: Any = 0,
     sign_out_override_until: datetime | None = None,
     present_until_override_at: datetime | None = None,
     late_until_override_at: datetime | None = None,
@@ -335,6 +364,7 @@ def get_attendance_decision(
         early_check_in_minutes=early_check_in_minutes,
         late_threshold_minutes=late_threshold_minutes,
         sign_out_grace_minutes=sign_out_grace_minutes,
+        sign_out_open_delay_minutes=sign_out_open_delay_minutes,
         sign_out_override_until=sign_out_override_until,
         present_until_override_at=present_until_override_at,
         late_until_override_at=late_until_override_at,
@@ -352,14 +382,22 @@ def get_attendance_decision(
             message="Check-in is not open yet for this event.",
         )
 
-    if event_status.event_status == "sign_out_open":
+    if event_status.event_status in {"sign_out_pending", "sign_out_open"}:
         return _build_attendance_decision(
             action="check_in",
             event_status=event_status,
             attendance_allowed=False,
             attendance_status=None,
-            reason_code="sign_out_window_open",
-            message="Check-in is closed because sign-out is currently open for this event.",
+            reason_code=(
+                "sign_out_not_open_yet"
+                if event_status.event_status == "sign_out_pending"
+                else "sign_out_window_open"
+            ),
+            message=(
+                "Check-in is closed because sign-out is not open yet for this event."
+                if event_status.event_status == "sign_out_pending"
+                else "Check-in is closed because sign-out is currently open for this event."
+            ),
         )
 
     if event_status.event_status == "closed":
@@ -415,6 +453,7 @@ def get_sign_out_decision(
     early_check_in_minutes: Any = 0,
     late_threshold_minutes: Any = 0,
     sign_out_grace_minutes: Any = 0,
+    sign_out_open_delay_minutes: Any = 0,
     sign_out_override_until: datetime | None = None,
     present_until_override_at: datetime | None = None,
     late_until_override_at: datetime | None = None,
@@ -427,6 +466,7 @@ def get_sign_out_decision(
         early_check_in_minutes=early_check_in_minutes,
         late_threshold_minutes=late_threshold_minutes,
         sign_out_grace_minutes=sign_out_grace_minutes,
+        sign_out_open_delay_minutes=sign_out_open_delay_minutes,
         sign_out_override_until=sign_out_override_until,
         present_until_override_at=present_until_override_at,
         late_until_override_at=late_until_override_at,
@@ -477,11 +517,13 @@ __all__ = [
     "get_event_timezone",
     "get_late_threshold_time",
     "get_normal_sign_out_close_time",
+    "get_sign_out_open_time",
     "get_sign_out_decision",
     "normalize_early_check_in_minutes",
     "normalize_event_datetime",
     "normalize_late_threshold_minutes",
     "normalize_optional_event_datetime",
+    "normalize_sign_out_open_delay_minutes",
     "normalize_sign_out_grace_minutes",
     "normalize_window_minutes",
     "resolve_attendance_window_cutoffs",

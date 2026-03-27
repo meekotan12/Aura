@@ -4,6 +4,29 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const proxyTarget = env.VITE_DEV_PROXY_TARGET || "http://backend:8000";
+  const directProxyPaths = [
+    "/auth",
+    "/attendance",
+    "/departments",
+    "/events",
+    "/face",
+    "/health",
+    "/login",
+    "/media",
+    "/programs",
+    "/public-attendance",
+    "/school-settings",
+    "/users",
+  ];
+  const directProxyEntries = Object.fromEntries(
+    directProxyPaths.map((path) => [
+      path,
+      {
+        target: proxyTarget,
+        changeOrigin: true,
+      },
+    ])
+  );
 
   return {
     plugins: [react()],
@@ -23,6 +46,7 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       allowedHosts: true,
       proxy: {
+        ...directProxyEntries,
         "/openapi.json": {
           target: proxyTarget,
           changeOrigin: true,
@@ -35,6 +59,21 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
+        "/api/docs": {
+          target: proxyTarget,
+          changeOrigin: true,
+          rewrite: () => "/docs",
+        },
+        "/api/redoc": {
+          target: proxyTarget,
+          changeOrigin: true,
+          rewrite: () => "/redoc",
+        },
+        "/api/openapi.json": {
+          target: proxyTarget,
+          changeOrigin: true,
+          rewrite: () => "/openapi.json",
+        },
         "/token": {
           target: proxyTarget,
           changeOrigin: true,
@@ -42,7 +81,6 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: proxyTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ""),
         },
       },
     },

@@ -57,8 +57,24 @@ from app.utils.passwords import generate_secure_password
 
 router = APIRouter(tags=["authentication"])
 FORGOT_PASSWORD_GENERIC_MESSAGE = (
-    "If the account exists, a password reset request has been submitted for Campus Admin approval."
+    "If the account exists, a password reset request has been submitted for administrator approval."
 )
+
+
+def _is_platform_admin_account(user: User | None) -> bool:
+    return bool(user) and has_any_role(user, ["admin"]) and getattr(user, "school_id", None) is None
+
+
+def _requires_platform_admin_password_reset_approval(user: User | None) -> bool:
+    return bool(user) and has_any_role(user, ["admin", "campus_admin"])
+
+
+def _can_submit_public_password_reset_request(user: User | None) -> bool:
+    if user is None or not getattr(user, "is_active", True):
+        return False
+    if getattr(user, "school_id", None) is None:
+        return False
+    return not _is_platform_admin_account(user)
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
@@ -319,10 +335,7 @@ def request_forgot_password(
     if not target_user:
         return ForgotPasswordRequestResponse(message=FORGOT_PASSWORD_GENERIC_MESSAGE)
 
-    if not getattr(target_user, "is_active", True) or getattr(target_user, "school_id", None) is None:
-        return ForgotPasswordRequestResponse(message=FORGOT_PASSWORD_GENERIC_MESSAGE)
-
-    if has_any_role(target_user, ["admin", "campus_admin"]):
+    if not _can_submit_public_password_reset_request(target_user):
         return ForgotPasswordRequestResponse(message=FORGOT_PASSWORD_GENERIC_MESSAGE)
 
     existing_pending = (
@@ -354,7 +367,7 @@ def list_password_reset_requests(
     current_user: User = Depends(get_current_admin_or_campus_admin),
     db: Session = Depends(get_db),
 ):
-    is_platform_admin = has_any_role(current_user, ["admin"]) and getattr(current_user, "school_id", None) is None
+    is_platform_admin = _is_platform_admin_account(current_user)
 
     query = (
         db.query(PasswordResetRequest)
@@ -370,6 +383,14 @@ def list_password_reset_requests(
         query = query.filter(PasswordResetRequest.school_id == actor_school_id)
 
     requests = query.all()
+    if not is_platform_admin:
+        requests = [
+            item
+            for item in requests
+            if item.user is not None
+            and not _requires_platform_admin_password_reset_approval(item.user)
+        ]
+
     return [
         PasswordResetRequestItem(
             id=item.id,
@@ -405,7 +426,7 @@ def approve_password_reset_request(
     if not request_item or not request_item.user:
         raise HTTPException(status_code=404, detail="Pending password reset request not found")
 
-    is_platform_admin = has_any_role(current_user, ["admin"]) and getattr(current_user, "school_id", None) is None
+    is_platform_admin = _is_platform_admin_account(current_user)
     if not is_platform_admin:
         actor_school_id = getattr(current_user, "school_id", None)
         if actor_school_id is None or actor_school_id != request_item.school_id:
@@ -416,7 +437,7 @@ def approve_password_reset_request(
         raise HTTPException(status_code=400, detail="Target user is inactive")
 
     if has_any_role(current_user, ["campus_admin"]) and not has_any_role(current_user, ["admin"]):
-        if has_any_role(target_user, ["admin", "campus_admin"]):
+        if _requires_platform_admin_password_reset_approval(target_user):
             raise HTTPException(
                 status_code=403,
                 detail="Campus Admin cannot reset admin or Campus Admin accounts.",

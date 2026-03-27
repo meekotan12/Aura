@@ -48,6 +48,11 @@ class Event(Base):
         nullable=False,
         default=DEFAULT_EVENT_SIGN_OUT_GRACE_MINUTES,
     )
+    sign_out_open_delay_minutes = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
     sign_out_override_until = Column(DateTime, nullable=True)
     present_until_override_at = Column(DateTime, nullable=True)
     late_until_override_at = Column(DateTime, nullable=True)

@@ -1,8 +1,11 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { buildApiUrl } from "./apiUrl";
+import { buildAuthHeaders as buildSharedAuthHeaders } from "../lib/api/client";
+
 const STUDENT_FACE_ENROLLMENT_KEY = "valid8.studentFaceEnrollment";
 
 type CurrentUserProfileResponse = {
   id?: number;
+  face_scan_bypass_enabled?: boolean;
   roles?: Array<{
     role?: {
       name?: string;
@@ -34,6 +37,7 @@ export interface StudentFaceEnrollmentStatus {
   faceRegistered: boolean;
   registrationComplete: boolean;
   studentId: string | null;
+  faceScanBypassEnabled: boolean;
 }
 
 const normalizeRole = (role: string) =>
@@ -42,21 +46,8 @@ const normalizeRole = (role: string) =>
 export const hasStudentRole = (roles: string[]) =>
   roles.some((role) => normalizeRole(role) === "student");
 
-const getStoredToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
-
 const buildAuthHeaders = (authToken?: string | null) => {
-  const token = authToken ?? getStoredToken();
-  if (!token) {
-    throw new Error("No authentication token found.");
-  }
-
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
+  return buildSharedAuthHeaders(authToken, { "Content-Type": "application/json" });
 };
 
 const parseJson = async <T>(response: Response) =>
@@ -139,7 +130,7 @@ export const isStudentFaceEnrollmentRequired = (userId?: number | null) => {
 export const fetchStudentFaceEnrollmentStatus = async (
   authToken?: string | null
 ): Promise<StudentFaceEnrollmentStatus> => {
-  const response = await fetch(`${BASE_URL}/users/me/`, {
+  const response = await fetch(buildApiUrl("/api/users/me/"), {
     method: "GET",
     headers: buildAuthHeaders(authToken),
   });
@@ -164,9 +155,10 @@ export const fetchStudentFaceEnrollmentStatus = async (
     roles,
     hasStudentRole: hasStudent,
     hasStudentProfile: Boolean(studentProfile),
-    faceRegistered: Boolean(studentProfile?.is_face_registered),
+    faceRegistered: Boolean(studentProfile?.is_face_registered) || Boolean(body.face_scan_bypass_enabled),
     registrationComplete: Boolean(studentProfile?.registration_complete),
     studentId: studentProfile?.student_id ?? null,
+    faceScanBypassEnabled: Boolean(body.face_scan_bypass_enabled),
   };
 };
 
@@ -175,7 +167,7 @@ export const registerCurrentStudentFace = async (
   authToken?: string | null
 ) => {
   const imageBase64 = await blobToDataUrl(imageBlob);
-  const response = await fetch(`${BASE_URL}/face/register`, {
+  const response = await fetch(buildApiUrl("/api/face/register"), {
     method: "POST",
     headers: buildAuthHeaders(authToken),
     body: JSON.stringify({ image_base64: imageBase64 }),

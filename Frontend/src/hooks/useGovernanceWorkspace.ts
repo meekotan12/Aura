@@ -8,15 +8,8 @@ import {
 } from "../api/governanceHierarchyApi";
 import { normalizeLogoUrl } from "../api/schoolSettingsApi";
 import { useUser } from "../context/UserContext";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import { useGovernanceAccess } from "./useGovernanceAccess";
-
-interface StoredSession {
-  id?: number;
-  firstName?: string;
-  lastName?: string;
-  schoolId?: number | null;
-  schoolName?: string | null;
-}
 
 const WORKSPACE_FALLBACKS: Record<
   GovernanceUnitType,
@@ -39,18 +32,8 @@ const WORKSPACE_FALLBACKS: Record<
   },
 };
 
-const getStoredSession = (): StoredSession | null => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return null;
-    return JSON.parse(raw) as StoredSession;
-  } catch {
-    return null;
-  }
-};
-
 export const useGovernanceWorkspace = (unitType: GovernanceUnitType) => {
-  const session = useMemo(() => getStoredSession(), []);
+  const session = useMemo(() => readStoredUserSession(), []);
   const { branding } = useUser();
   const governance = useGovernanceAccess();
   const accessUnit = useMemo(

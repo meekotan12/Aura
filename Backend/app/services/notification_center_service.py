@@ -17,6 +17,7 @@ from app.models.platform_features import NotificationLog, UserNotificationPrefer
 from app.models.user import StudentProfile, User
 from app.services.attendance_status import ATTENDED_STATUS_VALUES
 from app.services.email_service import EmailDeliveryError, send_plain_email
+from app.services.event_attendance_service import get_event_participant_student_ids
 
 
 def get_or_create_notification_preference(db: Session, *, user_id: int) -> UserNotificationPreference:
@@ -60,6 +61,30 @@ def create_notification_log(
     db.add(row)
     db.flush()
     return row
+
+
+def send_in_app_notification(
+    db: Session,
+    *,
+    user: User,
+    school_id: int | None,
+    category: str,
+    subject: str,
+    message: str,
+    metadata_json: dict | None = None,
+) -> str:
+    create_notification_log(
+        db,
+        school_id=school_id,
+        user_id=user.id,
+        category=category,
+        channel="in_app",
+        status="sent",
+        subject=subject,
+        message=message,
+        metadata_json=metadata_json,
+    )
+    return "sent"
 
 
 def _send_email_with_log(
@@ -156,10 +181,24 @@ def send_notification_to_user(
     category: str,
     subject: str,
     message: str,
+    deliver_in_app: bool = False,
     metadata_json: dict | None = None,
 ) -> str:
     pref = get_or_create_notification_preference(db, user_id=user.id)
     status_values: list[str] = []
+
+    if deliver_in_app:
+        status_values.append(
+            send_in_app_notification(
+                db,
+                user=user,
+                school_id=school_id,
+                category=category,
+                subject=subject,
+                message=message,
+                metadata_json=metadata_json,
+            )
+        )
 
     if pref.email_enabled:
         status_values.append(
@@ -240,6 +279,29 @@ def send_account_security_notification(
         category="account_security",
         subject=subject,
         message=message,
+        deliver_in_app=True,
+        metadata_json=metadata_json,
+    )
+
+
+def send_attendance_notification(
+    db: Session,
+    *,
+    user: User,
+    school_id: int | None,
+    category: str,
+    subject: str,
+    message: str,
+    metadata_json: dict | None = None,
+) -> str:
+    return send_notification_to_user(
+        db,
+        user=user,
+        school_id=school_id,
+        category=category,
+        subject=subject,
+        message=message,
+        deliver_in_app=True,
         metadata_json=metadata_json,
     )
 
@@ -394,3 +456,107 @@ def dispatch_low_attendance_notifications(
         "failed": failed,
         "skipped": skipped,
     }
+
+
+def dispatch_event_reminder_notifications(
+    db: Session,
+    *,
+    school_id: int,
+    lead_hours: int = 24,
+) -> dict[str, int]:
+    now = datetime.utcnow()
+    reminder_cutoff = now + timedelta(hours=max(1, lead_hours))
+    events = (
+        db.query(Event)
+        .filter(
+            Event.school_id == school_id,
+            Event.start_datetime >= now,
+            Event.start_datetime <= reminder_cutoff,
+        )
+        .all()
+    )
+
+    statuses: list[str] = []
+    processed = 0
+
+    for event in events:
+        participant_ids = get_event_participant_student_ids(db, event)
+        if not participant_ids:
+            continue
+
+        existing_attendance_student_ids = {
+            student_id
+            for (student_id,) in (
+                db.query(Attendance.student_id)
+                .filter(
+                    Attendance.event_id == event.id,
+                    Attendance.student_id.in_(participant_ids),
+                )
+                .distinct()
+                .all()
+            )
+        }
+        pending_student_ids = [
+            student_id for student_id in participant_ids if student_id not in existing_attendance_student_ids
+        ]
+        if not pending_student_ids:
+            continue
+
+        recipients = (
+            db.query(User)
+            .join(StudentProfile, StudentProfile.user_id == User.id)
+            .filter(
+                User.school_id == school_id,
+                StudentProfile.id.in_(pending_student_ids),
+            )
+            .all()
+        )
+        for user in recipients:
+            processed += 1
+            subject = f"Event Reminder: {event.name}"
+            message = (
+                f"Hi {user.first_name or 'Student'},\n\n"
+                f"This is a reminder that {event.name} starts at {event.start_datetime}.\n"
+                "Open the attendance page when the event window is active to complete both sign-in and sign-out.\n\n"
+                "Valid8 Attendance System"
+            )
+            statuses.append(
+                send_notification_to_user(
+                    db,
+                    user=user,
+                    school_id=school_id,
+                    category="event_reminder",
+                    subject=subject,
+                    message=message,
+                    deliver_in_app=True,
+                    metadata_json={
+                        "event_id": event.id,
+                        "event_name": event.name,
+                        "event_start": event.start_datetime.isoformat(),
+                        "lead_hours": int(lead_hours),
+                    },
+                )
+            )
+
+    sent, failed, skipped = _summarize_statuses(statuses)
+    return {
+        "processed_users": processed,
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def get_notification_inbox_for_user(
+    db: Session,
+    *,
+    user_id: int,
+    limit: int = 50,
+) -> list[NotificationLog]:
+    return (
+        db.query(NotificationLog)
+        .filter(NotificationLog.user_id == user_id)
+        .order_by(NotificationLog.created_at.desc(), NotificationLog.id.desc())
+        .limit(max(1, min(limit, 200)))
+        .all()
+    )

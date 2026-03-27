@@ -1,0 +1,4 @@
+Frontend: https://rizal-v1-frontend.vercel.app
+Backend API: https://backend-api-production-32e5.up.railway.app
+Backend Health: https://backend-api-production-32e5.up.railway.app/health
+Database URL: postgresql://postgres:TuMiPmOdDSRongvePtqqCNmIkmjiJzZP@caboose.proxy.rlwy.net:10736/railway

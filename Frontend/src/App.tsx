@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { handleInactiveSchoolSession } from "./api/authApi";
+import { installApiFetchInterceptor } from "./lib/api/client";
 
 const Home = lazy(() => import("./components/Home"));
 const Unauthorized = lazy(() => import("./components/Unauthorized"));
@@ -33,6 +33,7 @@ const SchoolImportUsers = lazy(() => import("./pages/SchoolImportUsers"));
 const SchoolPasswordResetRequests = lazy(
   () => import("./pages/SchoolPasswordResetRequests")
 );
+const CreateCampusStudent = lazy(() => import("./pages/CreateCampusStudent"));
 const AdminSchoolManagement = lazy(
   () => import("./pages/AdminSchoolManagement")
 );
@@ -76,38 +77,7 @@ const RouteLoader = () => (
 
 const App = () => {
   useEffect(() => {
-    const originalFetch = window.fetch.bind(window);
-
-    window.fetch = async (...args: Parameters<typeof window.fetch>) => {
-      const response = await originalFetch(...args);
-
-      if (response.status === 403) {
-        const clonedResponse = response.clone();
-        let detail: unknown = null;
-
-        try {
-          const payload = await clonedResponse.json();
-          detail =
-            payload && typeof payload === "object"
-              ? (payload as { detail?: unknown }).detail ?? null
-              : null;
-        } catch {
-          try {
-            detail = await clonedResponse.text();
-          } catch {
-            detail = null;
-          }
-        }
-
-        handleInactiveSchoolSession(detail);
-      }
-
-      return response;
-    };
-
-    return () => {
-      window.fetch = originalFetch;
-    };
+    return installApiFetchInterceptor();
   }, []);
 
   return (
@@ -155,9 +125,13 @@ const App = () => {
               element={<NotificationCenter />}
             />
             <Route path="/admin_security" element={<SecurityCenter />} />
-            <Route
+          <Route
               path="/admin_face_verification"
               element={<FacialVerification role="admin" />}
+            />
+            <Route
+              path="/admin_password_resets"
+              element={<SchoolPasswordResetRequests />}
             />
             <Route
               path="/admin_subscription"
@@ -177,6 +151,10 @@ const App = () => {
             <Route
               path="/student_events_attended"
               element={<EventsAttended role="student" />}
+            />
+            <Route
+              path="/student_notifications"
+              element={<NotificationCenter />}
             />
             <Route
               path="/student_profile"
@@ -208,6 +186,10 @@ const App = () => {
               element={<SchoolImportUsers />}
             />
             <Route
+              path="/campus_admin_create_student"
+              element={<CreateCampusStudent />}
+            />
+            <Route
               path="/campus_admin_password_resets"
               element={<SchoolPasswordResetRequests />}
             />
@@ -234,83 +216,6 @@ const App = () => {
             <Route
               path="/campus_admin_profile"
               element={<Profile role="campus_admin" />}
-            />
-
-            <Route
-              path="/school_it_dashboard"
-              element={<Navigate to="/campus_admin_dashboard" replace />}
-            />
-            <Route
-              path="/school_it_home"
-              element={<Navigate to="/campus_admin_home" replace />}
-            />
-            <Route
-              path="/school_it_events"
-              element={<Navigate to="/campus_admin_events" replace />}
-            />
-            <Route
-              path="/school_it_reports"
-              element={<Navigate to="/campus_admin_reports" replace />}
-            />
-            <Route
-              path="/school_it_attendance"
-              element={<Navigate to="/campus_admin_attendance" replace />}
-            />
-            <Route
-              path="/school_it_announcements"
-              element={<Navigate to="/campus_admin_announcements" replace />}
-            />
-            <Route
-              path="/school_it_create_department_program"
-              element={<Navigate to="/campus_admin_create_department_program" replace />}
-            />
-            <Route
-              path="/school_it_branding"
-              element={<Navigate to="/campus_admin_branding" replace />}
-            />
-            <Route
-              path="/school_it_import_users"
-              element={<Navigate to="/campus_admin_import_users" replace />}
-            />
-            <Route
-              path="/school_it_password_resets"
-              element={<Navigate to="/campus_admin_password_resets" replace />}
-            />
-            <Route
-              path="/school_it_manage_users"
-              element={<Navigate to="/campus_admin_manage_users" replace />}
-            />
-            <Route
-              path="/school_it_audit_logs"
-              element={<Navigate to="/campus_admin_audit_logs" replace />}
-            />
-            <Route
-              path="/school_it_notifications"
-              element={<Navigate to="/campus_admin_notifications" replace />}
-            />
-            <Route
-              path="/school_it_security"
-              element={<Navigate to="/campus_admin_security" replace />}
-            />
-            <Route
-              path="/school_it_face_verification"
-              element={<Navigate to="/campus_admin_face_verification" replace />}
-            />
-            <Route
-              path="/school_it_subscription"
-              element={<Navigate to="/campus_admin_subscription" replace />}
-            />
-            <Route
-              path="/school_it_governance"
-              element={<Navigate to="/campus_admin_governance" replace />}
-            />
-            <Route
-              path="/school_it_governance_hierarchy"
-              element={<Navigate to="/campus_admin_governance_hierarchy" replace />}
-            />
-            <Route
-              path="/school_it_profile"
-              element={<Navigate to="/campus_admin_profile" replace />}
             />
           </Route>
 

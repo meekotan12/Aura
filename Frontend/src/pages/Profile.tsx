@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  fetchCurrentUserProfile,
+  updateSchoolScopedUser,
+} from "../api/userApi";
 import LogoutButton from "../components/LogoutButton";
 import NavbarStudent from "../components/NavbarStudent";
 import NavbarAdmin from "../components/NavbarAdmin";
@@ -13,7 +17,7 @@ import "../css/Profile.css";
 
 // Corrected interfaces
 interface Role {
-  id: number;
+  id?: number;
   name: string;
 }
 
@@ -25,18 +29,18 @@ interface UserData {
   id: number;
   email: string;
   first_name: string;
-  middle_name: string | null;
+  middle_name?: string | null;
   last_name: string;
   is_active: boolean;
   created_at: string;
   roles: UserRoleResponse[];
   student_profile?: {
     id: number;
-    student_id: string;
-    department_id: number;
-    program_id: number;
-    year_level: number;
-  };
+    student_id?: string | null;
+    department_id?: number | null;
+    program_id?: number | null;
+    year_level?: number | null;
+  } | null;
 }
 
 interface ProfileProps {
@@ -53,111 +57,31 @@ export const Profile: React.FC<ProfileProps> = ({ role }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-
-  // Improved fetchWithAuth function with better error handling
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token =
-      localStorage.getItem("authToken") || localStorage.getItem("access_token");
-    if (!token) {
-      navigate("/login");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("access_token");
-        navigate("/login");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      // If response is not OK, try to parse error details
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          // Try to parse error as JSON
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          // Extract error message from common API error formats
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            // Handle validation errors that might be nested
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          // If not JSON, use raw error text
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
-
-  // Check if user is logged in before fetching data
-  const checkAuthentication = (): boolean => {
-    const token =
-      localStorage.getItem("authToken") || localStorage.getItem("access_token");
-    if (!token) {
-      setError("You must be logged in to access this page");
-      setIsLoading(false);
-      return false;
-    }
-    return true;
-  };
-
   useEffect(() => {
     const fetchUserData = async () => {
       setIsLoading(true);
       setError(null);
 
-      if (!checkAuthentication()) return;
-
       try {
-        const response = await fetchWithAuth(`${BASE_URL}/users/me/`);
-        const data = await response.json();
-
+        const data = await fetchCurrentUserProfile();
         setUserData(data);
         setEditedEmail(data.email);
       } catch (error) {
         console.error("Failed to fetch user data:", error);
+        const message =
+          error instanceof Error ? error.message : "Failed to load profile. Please try again later.";
         setError(
-          error instanceof Error
-            ? error.message
-            : "Failed to load profile. Please try again later."
+          message.includes("authentication token")
+            ? "You must be logged in to access this page"
+            : message
         );
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchUserData();
-  }, [BASE_URL, navigate]);
+    void fetchUserData();
+  }, [navigate]);
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setEditedEmail(e.target.value);
@@ -167,8 +91,6 @@ export const Profile: React.FC<ProfileProps> = ({ role }) => {
   const handleSave = async () => {
     if (!userData) return;
 
-    if (!checkAuthentication()) return;
-
     setIsSubmitting(true);
     setError(null);
     try {
@@ -177,19 +99,13 @@ export const Profile: React.FC<ProfileProps> = ({ role }) => {
         email: editedEmail,
       };
 
-      // Using PATCH to update just the email field
-      await fetchWithAuth(`${BASE_URL}/users/${userData.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(updateData),
-      });
+      await updateSchoolScopedUser(userData.id, updateData);
 
       // Show success message
       setSuccessMessage("Email successfully updated!");
 
       // Refresh user data after update
-      const response = await fetchWithAuth(`${BASE_URL}/users/me/`);
-      const updatedData = await response.json();
-
+      const updatedData = await fetchCurrentUserProfile();
       setUserData(updatedData);
 
       // Clear success message after 3 seconds
@@ -273,7 +189,11 @@ export const Profile: React.FC<ProfileProps> = ({ role }) => {
   );
 
   // Return login prompt if authentication error occurs
-  if (!isLoading && error?.includes("log in")) {
+  if (
+    !isLoading &&
+    error &&
+    (error.includes("log in") || error.includes("authentication token"))
+  ) {
     return renderLoginPrompt();
   }
 

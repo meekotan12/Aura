@@ -18,26 +18,12 @@ import {
 } from "recharts";
 import Modal from "react-modal";
 import { fetchAllEvents } from "../api/eventsApi";
+import {
+  fetchEventAttendanceReport,
+  type EventAttendanceReport as AttendanceReport,
+} from "../api/attendanceApi";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import { isCampusAdminRole } from "../utils/roleUtils";
-
-interface AttendanceReport {
-  event_name: string;
-  event_date: string;
-  event_location: string;
-  total_participants: number;
-  attendees: number;
-  late_attendees: number;
-  absentees: number;
-  attendance_rate: number;
-  programs: { id: number; name: string }[];
-  program_breakdown: {
-    program: string;
-    total: number;
-    present: number;
-    late: number;
-    absent: number;
-  }[];
-}
 
 interface Event {
   id: number;
@@ -47,22 +33,12 @@ interface Event {
   location: string;
 }
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const PRIMARY_COLOR = "var(--primary-color, #162F65)";
 const SECONDARY_COLOR = "var(--secondary-color, #2C5F9E)";
 const ACCENT_COLOR = "var(--accent-color, #4A90E2)";
 
 export const Reports: React.FC = () => {
-  const storedRoles = (() => {
-    try {
-      const raw = localStorage.getItem("user");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as { roles?: string[] };
-      return Array.isArray(parsed.roles) ? parsed.roles : [];
-    } catch {
-      return [];
-    }
-  })();
+  const storedRoles = readStoredUserSession()?.roles ?? [];
   const isCampusAdmin = storedRoles.some(isCampusAdminRole);
   const [searchTerm, setSearchTerm] = useState("");
   const [events, setEvents] = useState<Event[]>([]);
@@ -73,22 +49,6 @@ export const Reports: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const deferredSearchTerm = useDeferredValue(searchTerm);
-
-  const getAuthHeaders = (): HeadersInit => {
-    const token =
-      localStorage.getItem("authToken") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token");
-
-    if (!token) {
-      throw new Error("No authentication token found");
-    }
-
-    return {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-  };
 
   const selectedProgramName =
     selectedProgram === "all"
@@ -132,15 +92,8 @@ export const Reports: React.FC = () => {
     event.name.toLowerCase().includes(deferredSearchTerm.toLowerCase())
   );
 
-  const fetchEventReport = async (event: Event): Promise<AttendanceReport> => {
-    const response = await fetch(`${BASE_URL}/attendance/events/${event.id}/report`, {
-      headers: getAuthHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch attendance report: ${response.status}`);
-    }
-    return (await response.json()) as AttendanceReport;
-  };
+  const fetchEventReport = async (event: Event): Promise<AttendanceReport> =>
+    fetchEventAttendanceReport(event.id);
 
   const handleViewReport = async (event: Event): Promise<AttendanceReport | null> => {
     setIsLoading(true);

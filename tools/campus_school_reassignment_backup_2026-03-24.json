@@ -1,0 +1,192 @@
+{
+  "users": [
+    {
+      "id": 2,
+      "email": "aclaogloryzann30@gmail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-22 15:56:20.834709",
+      "roles": "student"
+    },
+    {
+      "id": 108,
+      "email": "miguel.santos@gmail.com",
+      "school_id": 2,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:40.449653",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 109,
+      "email": "angelica.reyes@yahoo.com.ph",
+      "school_id": 3,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:41.786260",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 110,
+      "email": "carlo.mendoza@outlook.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:43.134239",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 111,
+      "email": "jessa.cruz@gmail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:45.035525",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 112,
+      "email": "paolo.bautista@yahoo.com.ph",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:46.907000",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 113,
+      "email": "maricel.garcia@gmail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:48.554730",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 114,
+      "email": "ronald.flores@ymail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:49.868421",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 115,
+      "email": "katrina.ramos@gmail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:51.527337",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 116,
+      "email": "dennis.navarro@yahoo.com.ph",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:52.864852",
+      "roles": "campus_admin"
+    },
+    {
+      "id": 117,
+      "email": "mae.velasco@gmail.com",
+      "school_id": 1,
+      "is_active": true,
+      "created_at": "2026-03-24 14:08:54.342862",
+      "roles": "campus_admin"
+    }
+  ],
+  "schools": [
+    {
+      "id": 2,
+      "name": "Debini University",
+      "address": "Debini University Address",
+      "logo_url": null,
+      "subscription_plan": "free",
+      "subscription_start": "2026-03-24",
+      "subscription_end": null,
+      "created_at": "2026-03-24 06:16:43.288467",
+      "updated_at": "2026-03-24 13:54:47.284699",
+      "school_name": "Debini University",
+      "school_code": "0123",
+      "primary_color": "#162F65",
+      "secondary_color": "#376195",
+      "subscription_status": "trial",
+      "active_status": false
+    },
+    {
+      "id": 3,
+      "name": "Deor and Dune Academe",
+      "address": "Deor and Dune Academe Address",
+      "logo_url": "/media/school-logos/b426dc4c2ac34bf5a1d3e49623b4e229.jpg",
+      "subscription_plan": "free",
+      "subscription_start": "2026-03-24",
+      "subscription_end": null,
+      "created_at": "2026-03-24 06:23:28.835249",
+      "updated_at": "2026-03-24 13:54:48.444560",
+      "school_name": "Deor and Dune Academe",
+      "school_code": "12345",
+      "primary_color": "#7c2813",
+      "secondary_color": "#7f4729",
+      "subscription_status": "trial",
+      "active_status": false
+    },
+    {
+      "id": 4,
+      "name": "Senote National High School",
+      "address": "Senote National High School Address",
+      "logo_url": "/media/school-logos/aba0b1bc38c8429f8719d5029c0316f1.jpg",
+      "subscription_plan": "free",
+      "subscription_start": "2026-03-24",
+      "subscription_end": null,
+      "created_at": "2026-03-24 09:31:30.146342",
+      "updated_at": "2026-03-24 09:31:30.146344",
+      "school_name": "Senote National High School",
+      "school_code": null,
+      "primary_color": "#162F65",
+      "secondary_color": "#2C5F9E",
+      "subscription_status": "trial",
+      "active_status": true
+    }
+  ],
+  "school_settings": [
+    {
+      "school_id": 2,
+      "primary_color": "#162F65",
+      "secondary_color": "#376195",
+      "accent_color": "#376195",
+      "updated_at": "2026-03-24 06:16:43.532941",
+      "updated_by_user_id": 4,
+      "event_default_early_check_in_minutes": 30,
+      "event_default_late_threshold_minutes": 10,
+      "event_default_sign_out_grace_minutes": 20
+    },
+    {
+      "school_id": 3,
+      "primary_color": "#7c2813",
+      "secondary_color": "#7f4729",
+      "accent_color": "#7f4729",
+      "updated_at": "2026-03-24 06:23:29.077687",
+      "updated_by_user_id": 4,
+      "event_default_early_check_in_minutes": 30,
+      "event_default_late_threshold_minutes": 10,
+      "event_default_sign_out_grace_minutes": 20
+    },
+    {
+      "school_id": 4,
+      "primary_color": "#162F65",
+      "secondary_color": "#2C5F9E",
+      "accent_color": "#2C5F9E",
+      "updated_at": "2026-03-24 09:31:30.397789",
+      "updated_by_user_id": 4,
+      "event_default_early_check_in_minutes": 30,
+      "event_default_late_threshold_minutes": 10,
+      "event_default_sign_out_grace_minutes": 20
+    }
+  ],
+  "school_subscription_settings": [],
+  "data_governance_settings": [
+    {
+      "school_id": 4,
+      "attendance_retention_days": 1095,
+      "audit_log_retention_days": 3650,
+      "import_file_retention_days": 180,
+      "auto_delete_enabled": false,
+      "updated_by_user_id": null,
+      "updated_at": "2026-03-24 14:23:27.529743"
+    }
+  ]
+}

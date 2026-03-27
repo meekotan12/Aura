@@ -6,6 +6,7 @@ import {
   FaBars,
   FaTimes,
   FaThList,
+  FaKey,
   FaSchool,
   FaClipboardList,
   FaShieldAlt,
@@ -119,6 +120,19 @@ export const NavbarAdmin = () => {
               >
                 <FaClipboardList className="nav-icon" />
                 <span className="nav-text">Audit Logs</span>
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/admin_password_resets"
+                className={({ isActive }) =>
+                  isActive ? "admin-nav-link active" : "admin-nav-link"
+                }
+                onClick={() => setSidebarOpen(false)}
+                title="Password Reset Requests"
+              >
+                <FaKey className="nav-icon" />
+                <span className="nav-text">Password Reset Requests</span>
               </NavLink>
             </li>
             <li>

@@ -2388,7 +2388,7 @@ def test_ssg_attendance_features_are_blocked_until_manage_attendance_is_granted(
     )
 
     blocked_response = client.get(
-        "/attendance/students/overview",
+        f"/api/attendance/students/overview",
         headers=_auth_headers(ssg_user),
     )
 
@@ -2426,7 +2426,7 @@ def test_ssg_attendance_features_are_blocked_until_manage_attendance_is_granted(
     )
 
     allowed_response = client.get(
-        "/attendance/students/overview",
+        f"/api/attendance/students/overview",
         headers=_auth_headers(ssg_user),
     )
 
@@ -2466,7 +2466,7 @@ def test_departments_and_programs_are_listed_only_within_the_actor_school(client
     )
 
     departments_a_response = client.get(
-        "/departments/",
+        f"/api/departments/",
         headers=_auth_headers(campus_admin_a),
     )
     assert departments_a_response.status_code == 200
@@ -2479,7 +2479,7 @@ def test_departments_and_programs_are_listed_only_within_the_actor_school(client
     ]
 
     departments_b_response = client.get(
-        "/departments/",
+        f"/api/departments/",
         headers=_auth_headers(campus_admin_b),
     )
     assert departments_b_response.status_code == 200
@@ -2492,13 +2492,13 @@ def test_departments_and_programs_are_listed_only_within_the_actor_school(client
     ]
 
     cross_school_department_response = client.get(
-        f"/departments/{department_b.id}",
+        f"/api/departments/{department_b.id}",
         headers=_auth_headers(campus_admin_a),
     )
     assert cross_school_department_response.status_code == 404
 
     programs_a_response = client.get(
-        "/programs/",
+        f"/api/programs/",
         headers=_auth_headers(campus_admin_a),
     )
     assert programs_a_response.status_code == 200
@@ -2510,7 +2510,7 @@ def test_departments_and_programs_are_listed_only_within_the_actor_school(client
     assert programs_a_payload[0]["department_ids"] == [department_a.id]
 
     programs_b_response = client.get(
-        "/programs/",
+        f"/api/programs/",
         headers=_auth_headers(campus_admin_b),
     )
     assert programs_b_response.status_code == 200
@@ -2522,7 +2522,7 @@ def test_departments_and_programs_are_listed_only_within_the_actor_school(client
     assert programs_b_payload[0]["department_ids"] == [department_b.id]
 
     cross_school_program_response = client.get(
-        f"/programs/{program_b.id}",
+        f"/api/programs/{program_b.id}",
         headers=_auth_headers(campus_admin_a),
     )
     assert cross_school_program_response.status_code == 404
@@ -2751,7 +2751,7 @@ def test_sg_event_queries_are_filtered_to_their_department_scope(client, test_db
     )
 
     response = client.get(
-        "/events/?governance_context=SG",
+        f"/api/events/?governance_context=SG",
         headers=_auth_headers(sg_user),
     )
 
@@ -2859,7 +2859,7 @@ def test_org_event_queries_are_filtered_to_their_program_scope(client, test_db):
     )
 
     response = client.get(
-        "/events/?governance_context=ORG",
+        f"/api/events/?governance_context=ORG",
         headers=_auth_headers(org_user),
     )
 
@@ -2946,7 +2946,7 @@ def test_sg_event_create_without_governance_context_is_forced_to_department_scop
     start_datetime = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None, microsecond=0) + timedelta(days=1)
     end_datetime = start_datetime + timedelta(hours=2)
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(sg_user),
         json={
             "name": "Scoped SG Event",
@@ -3065,7 +3065,7 @@ def test_org_event_create_without_governance_context_is_forced_to_program_scope(
     start_datetime = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None, microsecond=0) + timedelta(days=1)
     end_datetime = start_datetime + timedelta(hours=2)
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(org_user),
         json={
             "name": "Scoped ORG Event",
@@ -3178,7 +3178,7 @@ def test_sg_event_status_cannot_start_before_scheduled_start_time(client, test_d
     )
 
     response = client.patch(
-        f"/events/{event.id}/status?status=ongoing&governance_context=SG",
+        f"/api/events/{event.id}/status?status=ongoing&governance_context=SG",
         headers=_auth_headers(sg_user),
     )
 
@@ -3275,7 +3275,7 @@ def test_sg_event_status_cannot_reopen_closed_event_to_upcoming(client, test_db)
     test_db.commit()
 
     response = client.patch(
-        f"/events/{event.id}/status?status=upcoming&governance_context=SG",
+        f"/api/events/{event.id}/status?status=upcoming&governance_context=SG",
         headers=_auth_headers(sg_user),
     )
 
@@ -3372,7 +3372,7 @@ def test_sg_event_status_reopen_during_sign_out_syncs_back_to_ongoing(client, te
     test_db.commit()
 
     response = client.patch(
-        f"/events/{event.id}/status?status=upcoming&governance_context=SG",
+        f"/api/events/{event.id}/status?status=upcoming&governance_context=SG",
         headers=_auth_headers(sg_user),
     )
 
@@ -3467,7 +3467,7 @@ def test_sg_event_status_reopen_closed_cancelled_event_syncs_to_completed(client
     test_db.commit()
 
     response = client.patch(
-        f"/events/{event.id}/status?status=upcoming&governance_context=SG",
+        f"/api/events/{event.id}/status?status=upcoming&governance_context=SG",
         headers=_auth_headers(sg_user),
     )
 
@@ -3578,7 +3578,7 @@ def test_sg_event_default_override_and_reset_are_used_for_future_events(client, 
     start_datetime = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None, microsecond=0) + timedelta(days=1)
     end_datetime = start_datetime + timedelta(hours=2)
     create_override_response = client.post(
-        "/events/?governance_context=SG",
+        f"/api/events/?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "name": "SG Override Default Event",
@@ -3612,7 +3612,7 @@ def test_sg_event_default_override_and_reset_are_used_for_future_events(client, 
     assert reset_payload["effective_sign_out_grace_minutes"] == 20
 
     create_inherited_response = client.post(
-        "/events/?governance_context=SG",
+        f"/api/events/?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "name": "SG Inherited Default Event",
@@ -3738,7 +3738,7 @@ def test_org_event_default_override_is_used_for_future_events(client, test_db):
     start_datetime = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None, microsecond=0) + timedelta(days=1)
     end_datetime = start_datetime + timedelta(hours=2)
     create_response = client.post(
-        "/events/?governance_context=ORG",
+        f"/api/events/?governance_context=ORG",
         headers=_auth_headers(org_user),
         json={
             "name": "ORG Override Default Event",
@@ -3841,7 +3841,7 @@ def test_sg_event_update_without_governance_context_rejects_out_of_scope_event(c
     )
 
     response = client.patch(
-        f"/events/{out_of_scope_event.id}",
+        f"/api/events/{out_of_scope_event.id}",
         headers=_auth_headers(sg_user),
         json={"name": "Edited by SG"},
     )
@@ -3965,7 +3965,7 @@ def test_sg_manual_attendance_blocks_students_outside_department_scope(client, t
     )
 
     allowed_response = client.post(
-        "/attendance/manual?governance_context=SG",
+        f"/api/attendance/manual?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "event_id": event.id,
@@ -3975,7 +3975,7 @@ def test_sg_manual_attendance_blocks_students_outside_department_scope(client, t
     assert allowed_response.status_code == 200
 
     blocked_response = client.post(
-        "/attendance/manual?governance_context=SG",
+        f"/api/attendance/manual?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "event_id": event.id,
@@ -4086,7 +4086,7 @@ def test_sg_manual_attendance_sign_out_requires_early_open_and_preserves_status_
     )
 
     check_in_response = client.post(
-        "/attendance/manual?governance_context=SG",
+        f"/api/attendance/manual?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "event_id": event.id,
@@ -4110,7 +4110,7 @@ def test_sg_manual_attendance_sign_out_requires_early_open_and_preserves_status_
     assert attendance.time_out is None
 
     blocked_sign_out_response = client.post(
-        "/attendance/manual?governance_context=SG",
+        f"/api/attendance/manual?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "event_id": event.id,
@@ -4123,7 +4123,7 @@ def test_sg_manual_attendance_sign_out_requires_early_open_and_preserves_status_
     assert blocked_detail["reason_code"] == "sign_out_not_open_yet"
 
     open_sign_out_response = client.post(
-        f"/events/{event.id}/sign-out/open-early?governance_context=SG",
+        f"/api/events/{event.id}/sign-out/open-early?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={"use_sign_out_grace_minutes": True},
     )
@@ -4135,7 +4135,7 @@ def test_sg_manual_attendance_sign_out_requires_early_open_and_preserves_status_
     assert event.sign_out_grace_minutes == 10
 
     sign_out_response = client.post(
-        "/attendance/manual?governance_context=SG",
+        f"/api/attendance/manual?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={
             "event_id": event.id,
@@ -4238,7 +4238,7 @@ def test_sg_sign_out_early_cannot_open_before_event_start(client, test_db):
     )
 
     response = client.post(
-        f"/events/{event.id}/sign-out/open-early?governance_context=SG",
+        f"/api/events/{event.id}/sign-out/open-early?governance_context=SG",
         headers=_auth_headers(sg_user),
         json={"use_sign_out_grace_minutes": False, "close_after_minutes": 12},
     )
@@ -4573,7 +4573,7 @@ def test_governance_student_notes_require_manage_students_and_stay_scoped(client
     assert blocked_response.json()["detail"] == "Student not found in this governance scope"
 
 
-def test_student_event_list_is_filtered_to_participant_scope(client, test_db):
+def test_student_event_list_shows_all_upcoming_events_but_keeps_active_scope_filters(client, test_db):
     school = _create_school(test_db, code="STU-EVENT-SCOPE")
     student_role = _create_role(test_db, name="student")
     department_a, program_a = _create_academic_scope(
@@ -4611,16 +4611,23 @@ def test_student_event_list_is_filtered_to_participant_scope(client, test_db):
         program_id=program_a.id,
     )
 
+    upcoming_start = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None) + timedelta(days=1)
+    upcoming_end = upcoming_start + timedelta(hours=2)
+
     school_event = _create_event(
         test_db,
         school_id=school.id,
         name="School-Wide Event",
+        start_datetime=upcoming_start,
+        end_datetime=upcoming_end,
     )
     department_event = _create_event(
         test_db,
         school_id=school.id,
         name="Engineering Event",
         department_ids=[department_a.id],
+        start_datetime=upcoming_start,
+        end_datetime=upcoming_end,
     )
     program_event = _create_event(
         test_db,
@@ -4628,24 +4635,37 @@ def test_student_event_list_is_filtered_to_participant_scope(client, test_db):
         name="Computer Engineering Event",
         department_ids=[department_a.id],
         program_ids=[program_a.id],
+        start_datetime=upcoming_start,
+        end_datetime=upcoming_end,
     )
-    hidden_same_department_program_event = _create_event(
+    upcoming_same_department_program_event = _create_event(
         test_db,
         school_id=school.id,
         name="Civil Engineering Event",
         department_ids=[department_a.id],
         program_ids=[alternate_program.id],
+        start_datetime=upcoming_start,
+        end_datetime=upcoming_end,
     )
-    hidden_other_department_event = _create_event(
+    upcoming_other_department_event = _create_event(
         test_db,
         school_id=school.id,
         name="Education Event",
         department_ids=[department_b.id],
         program_ids=[program_b.id],
+        start_datetime=upcoming_start,
+        end_datetime=upcoming_end,
+    )
+    hidden_other_department_ongoing_event = _create_event(
+        test_db,
+        school_id=school.id,
+        name="Education Ongoing Event",
+        department_ids=[department_b.id],
+        program_ids=[program_b.id],
     )
 
     list_response = client.get(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(student_user),
     )
     assert list_response.status_code == 200
@@ -4654,12 +4674,13 @@ def test_student_event_list_is_filtered_to_participant_scope(client, test_db):
         school_event.name,
         department_event.name,
         program_event.name,
+        upcoming_same_department_program_event.name,
+        upcoming_other_department_event.name,
     }
-    assert hidden_same_department_program_event.name not in names
-    assert hidden_other_department_event.name not in names
+    assert hidden_other_department_ongoing_event.name not in names
 
     detail_response = client.get(
-        f"/events/{hidden_other_department_event.id}",
+        f"/api/events/{hidden_other_department_ongoing_event.id}",
         headers=_auth_headers(student_user),
     )
     assert detail_response.status_code == 404
@@ -4772,7 +4793,7 @@ def test_campus_admin_create_event_without_near_start_override_when_full_early_w
     end_datetime = start_datetime + timedelta(hours=1)
 
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(campus_admin),
         json={
             "name": "Far Future Event",
@@ -4809,7 +4830,7 @@ def test_campus_admin_create_event_adds_near_start_attendance_override_windows(
     end_datetime = manila_now + timedelta(minutes=71)
 
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(campus_admin),
         json={
             "name": "Near Start Event",
@@ -4852,7 +4873,7 @@ def test_campus_admin_create_event_rejects_near_start_override_when_start_is_alr
     end_datetime = manila_now + timedelta(minutes=70)
 
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(campus_admin),
         json={
             "name": "Past Start Event",
@@ -4887,7 +4908,7 @@ def test_campus_admin_create_event_rejects_too_short_near_start_override_window(
     end_datetime = manila_now + timedelta(minutes=59)
 
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers=_auth_headers(campus_admin),
         json={
             "name": "Short Event",
@@ -4930,7 +4951,7 @@ def test_campus_admin_update_event_can_add_and_clear_near_start_attendance_overr
     )
 
     add_override_response = client.patch(
-        f"/events/{event.id}",
+        f"/api/events/{event.id}",
         headers=_auth_headers(campus_admin),
         json={
             "start_datetime": (manila_now + timedelta(minutes=1)).isoformat(),
@@ -4944,7 +4965,7 @@ def test_campus_admin_update_event_can_add_and_clear_near_start_attendance_overr
     assert add_override_payload["late_until_override_at"] is not None
 
     clear_override_response = client.patch(
-        f"/events/{event.id}",
+        f"/api/events/{event.id}",
         headers=_auth_headers(campus_admin),
         json={
             "start_datetime": (manila_now + timedelta(hours=4)).isoformat(),

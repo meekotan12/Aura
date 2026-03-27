@@ -14,6 +14,7 @@ import {
   getStudentEventActionState,
 } from "../utils/eventAttendanceWindow";
 import { formatEventDepartments, formatEventPrograms } from "../utils/eventScopeLabels";
+import { getAttendanceTimestamp } from "../utils/attendanceDateTime";
 import "../css/UpcomingEvents.css";
 
 interface UpcomingEventsProps {
@@ -76,9 +77,7 @@ export const UpcomingEvents: React.FC<UpcomingEventsProps> = ({ role }) => {
         continue;
       }
 
-      if (
-        new Date(record.time_in).getTime() > new Date(existing.time_in).getTime()
-      ) {
+      if (getAttendanceTimestamp(record.time_in) > getAttendanceTimestamp(existing.time_in)) {
         recordsByEvent.set(record.event_id, record);
       }
     }

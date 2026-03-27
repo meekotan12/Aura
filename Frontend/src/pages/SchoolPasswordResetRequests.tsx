@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 
+import NavbarAdmin from "../components/NavbarAdmin";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 import {
   approvePasswordResetRequest,
   fetchPasswordResetRequests,
   PasswordResetRequestItem,
 } from "../api/passwordResetApi";
+import { isStoredCampusAdmin } from "../lib/auth/storedUser";
 import { formatRoleLabel } from "../utils/roleUtils";
 
 const SchoolPasswordResetRequests = () => {
+  const isCampusAdmin = isStoredCampusAdmin();
+  const NavbarComponent = isCampusAdmin ? NavbarSchoolIT : NavbarAdmin;
+
   const [requests, setRequests] = useState<PasswordResetRequestItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -56,14 +61,14 @@ const SchoolPasswordResetRequests = () => {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f7fa" }}>
-      <NavbarSchoolIT />
+      <NavbarComponent />
 
       <main className="container py-4">
         <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
           <div>
             <h3 className="mb-1">Password Reset Requests</h3>
             <p className="text-muted mb-0">
-              Approve user requests and send a temporary password automatically by email.
+              Review pending requests and send a temporary password automatically by email.
             </p>
           </div>
           <button

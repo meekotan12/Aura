@@ -188,7 +188,11 @@ def get_face_status(
         .filter(UserFaceRecognitionProfile.user_id == current_user.id)
         .first()
     )
+    face_runtime_ready, face_runtime_reason = face_service.face_recognition_status()
     anti_spoof_ready, anti_spoof_reason = face_service.anti_spoof_status()
+    if not face_runtime_ready:
+        anti_spoof_ready = False
+        anti_spoof_reason = face_runtime_reason
     return SecurityFaceStatusResponse(
         user_id=current_user.id,
         face_verification_required=True,

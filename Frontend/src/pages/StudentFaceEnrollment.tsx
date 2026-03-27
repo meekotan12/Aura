@@ -11,18 +11,10 @@ import {
   setStudentFaceEnrollmentRequired,
 } from "../api/studentFaceEnrollmentApi";
 import { resolveDashboardPath } from "../authFlow";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import { sanitizeRedirectPath } from "../utils/redirects";
 import "../css/FacialVerification.css";
 import "../css/StudentFaceEnrollment.css";
-
-type StoredUser = {
-  id?: number;
-  firstName?: string;
-  first_name?: string;
-  lastName?: string;
-  last_name?: string;
-  roles?: string[];
-};
 
 const toErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Failed to register the student face.";
@@ -31,18 +23,7 @@ const StudentFaceEnrollment = () => {
   const navigate = useNavigate();
   const redirectTimerRef = useRef<number | null>(null);
   const captureLockRef = useRef(false);
-  const storedUser = useMemo(() => {
-    const raw = localStorage.getItem("user");
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as StoredUser;
-    } catch {
-      return null;
-    }
-  }, []);
+  const storedUser = useMemo(() => readStoredUserSession(), []);
 
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [streamEnabled, setStreamEnabled] = useState(false);
@@ -55,9 +36,7 @@ const StudentFaceEnrollment = () => {
   const fallbackRoles = useMemo(() => storedUser?.roles || [], [storedUser]);
   const dashboardPath = sanitizeRedirectPath(resolveDashboardPath(fallbackRoles), "/student_dashboard");
   const displayName =
-    `${storedUser?.firstName || storedUser?.first_name || ""} ${
-      storedUser?.lastName || storedUser?.last_name || ""
-    }`.trim() || "Student";
+    `${storedUser?.firstName || ""} ${storedUser?.lastName || ""}`.trim() || "Student";
 
   useEffect(
     () => () => {
@@ -86,6 +65,12 @@ const StudentFaceEnrollment = () => {
         const safeNextDashboardPath = sanitizeRedirectPath(nextDashboardPath, "/student_dashboard");
 
         if (!status.hasStudentRole || !status.hasStudentProfile) {
+          clearStudentFaceEnrollmentState(status.userId ?? storedUser.id ?? null);
+          navigate(safeNextDashboardPath, { replace: true });
+          return;
+        }
+
+        if (status.faceScanBypassEnabled) {
           clearStudentFaceEnrollmentState(status.userId ?? storedUser.id ?? null);
           navigate(safeNextDashboardPath, { replace: true });
           return;

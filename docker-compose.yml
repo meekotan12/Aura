@@ -29,7 +29,7 @@ services:
       - "8025:8025"
 
   backend:
-    build: ./backend
+    build: ./Backend
     container_name: backend_v2
     ports:
       - "8000:8000"
@@ -52,7 +52,7 @@ services:
       - SCHOOL_LOGO_STORAGE_DIR=/tmp/valid8_school_logos
       - SCHOOL_LOGO_MAX_FILE_SIZE_MB=2
     volumes:
-      - ./backend:/app
+      - ./Backend:/app
       - import_storage:/tmp/valid8_imports
       - branding_storage:/tmp/valid8_school_logos
     restart: unless-stopped
@@ -62,7 +62,7 @@ services:
       - mailpit
 
   worker:
-    build: ./backend
+    build: ./Backend
     container_name: backend_worker_v2
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info
     environment:
@@ -84,7 +84,7 @@ services:
       - SCHOOL_LOGO_STORAGE_DIR=/tmp/valid8_school_logos
       - SCHOOL_LOGO_MAX_FILE_SIZE_MB=2
     volumes:
-      - ./backend:/app
+      - ./Backend:/app
       - import_storage:/tmp/valid8_imports
       - branding_storage:/tmp/valid8_school_logos
     restart: unless-stopped
@@ -94,7 +94,7 @@ services:
       - mailpit
 
   beat:
-    build: ./backend
+    build: ./Backend
     container_name: backend_beat_v2
     command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
     environment:
@@ -116,7 +116,7 @@ services:
       - SCHOOL_LOGO_STORAGE_DIR=/tmp/valid8_school_logos
       - SCHOOL_LOGO_MAX_FILE_SIZE_MB=2
     volumes:
-      - ./backend:/app
+      - ./Backend:/app
       - import_storage:/tmp/valid8_imports
       - branding_storage:/tmp/valid8_school_logos
     restart: unless-stopped
@@ -126,7 +126,7 @@ services:
       - mailpit
 
   frontend:
-    build: ./frontend
+    build: ./Frontend
     container_name: frontend_v2
     ports:
       - "5173:5173"
@@ -134,7 +134,7 @@ services:
       - backend
     working_dir: /app
     volumes:
-      - ./frontend:/app
+      - ./Frontend:/app
       - /app/node_modules
     command: sh /app/scripts/dev-entrypoint.sh
     restart: unless-stopped

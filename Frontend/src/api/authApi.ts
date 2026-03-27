@@ -3,13 +3,24 @@ import type { UpdateEventPayload } from "./eventsApi";
 import { applyTheme, clearBranding, saveTheme } from "./schoolSettingsApi";
 import { clearStudentFaceEnrollmentState } from "./studentFaceEnrollmentApi";
 import { clearGovernanceAccessCache } from "../hooks/useGovernanceAccess";
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import {
+  apiFetch,
+  buildAuthHeaders,
+  consumeAuthStatusMessage as consumeApiAuthStatusMessage,
+} from "../lib/api/client";
+import {
+  clearStoredAuthSession,
+  getStoredAuthToken,
+  getStoredUser,
+  getStoredUserData,
+  migrateLegacyAuthStorage,
+  persistStoredAuthToken,
+  setStoredUser,
+  setStoredUserData,
+} from "../lib/auth/sessionStore";
+
 const PENDING_FACE_AUTH_KEY = "valid8.pendingFaceAuth";
 const PENDING_FACE_AUTH_TTL_MS = 15 * 60 * 1000;
-export const INACTIVE_SCHOOL_DETAIL = "This account's school is inactive.";
-const AUTH_STATUS_MESSAGE_KEY = "valid8.authStatusMessage";
-
-let authRedirectInProgress = false;
 
 const normalizeRoles = (roles: unknown): string[] => {
   if (!Array.isArray(roles)) return [];
@@ -17,11 +28,6 @@ const normalizeRoles = (roles: unknown): string[] => {
     .map((role) => (typeof role === "string" ? role.trim() : ""))
     .filter((role) => role.length > 0);
 };
-
-const getStoredToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
 
 const extractDetailMessage = (payload: unknown): string | null => {
   if (!payload || typeof payload !== "object") {
@@ -33,11 +39,7 @@ const extractDetailMessage = (payload: unknown): string | null => {
 };
 
 const authHeaders = () => {
-  const token = getStoredToken();
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-  return { Authorization: `Bearer ${token}` };
+  return buildAuthHeaders();
 };
 
 interface AuthResponseBody {
@@ -129,7 +131,7 @@ const normalizeAuthSession = (
 };
 
 const persistUserData = (session: AuthSession) => {
-  localStorage.setItem("userData", JSON.stringify({
+  setStoredUserData(JSON.stringify({
     email: session.email,
     roles: session.roles,
     id: session.id,
@@ -187,10 +189,8 @@ export const persistAuthSession = (session: AuthSession) => {
     throw new Error("Face verification is still pending for this session.");
   }
 
-  localStorage.setItem("authToken", session.token);
-  localStorage.setItem("token", session.token);
-  localStorage.setItem("access_token", session.token);
-  localStorage.setItem("user", JSON.stringify(session));
+  persistStoredAuthToken(session.token);
+  setStoredUser(JSON.stringify(session));
   persistUserData(session);
   clearGovernanceAccessCache();
 
@@ -209,11 +209,12 @@ export const persistAuthSession = (session: AuthSession) => {
 
 export const login = async (email: string, password: string) => {
   try {
+    migrateLegacyAuthStorage();
     // Trim inputs
     email = email.trim();
     password = password.trim();
 
-    const response = await fetch(`${BASE_URL}/login`, {
+    const response = await apiFetch("/login", {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -246,7 +247,7 @@ export const verifyMfaChallenge = async (
   challengeId: string,
   code: string
 ) => {
-  const response = await fetch(`${BASE_URL}/auth/mfa/verify`, {
+  const response = await apiFetch("/auth/mfa/verify", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -270,51 +271,24 @@ export const verifyMfaChallenge = async (
 
 // Add this helper function to get the token
 export const getAuthToken = () => {
-  return getStoredToken();
+  return getStoredAuthToken();
 };
 
 // Add this function to clear auth data
 export const logout = () => {
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-  localStorage.removeItem('userData');
+  clearStoredAuthSession();
   clearGovernanceAccessCache();
   clearPendingFaceAuthSession();
   clearStudentFaceEnrollmentState();
   clearBranding();
 };
 
-export const handleInactiveSchoolSession = (detail: unknown): boolean => {
-  if (detail !== INACTIVE_SCHOOL_DETAIL || !getStoredToken()) {
-    return false;
-  }
-
-  if (authRedirectInProgress) {
-    return true;
-  }
-
-  authRedirectInProgress = true;
-  sessionStorage.setItem(AUTH_STATUS_MESSAGE_KEY, INACTIVE_SCHOOL_DETAIL);
-  logout();
-  window.location.replace("/login");
-  return true;
-};
-
 export const consumeAuthStatusMessage = (): string | null => {
-  const message = sessionStorage.getItem(AUTH_STATUS_MESSAGE_KEY);
-  if (!message) {
-    return null;
-  }
-
-  sessionStorage.removeItem(AUTH_STATUS_MESSAGE_KEY);
-  authRedirectInProgress = false;
-  return message;
+  return consumeApiAuthStatusMessage();
 };
 
 export const changePassword = async (currentPassword: string, newPassword: string) => {
-  const response = await fetch(`${BASE_URL}/auth/change-password`, {
+  const response = await apiFetch("/auth/change-password", {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -335,22 +309,22 @@ export const changePassword = async (currentPassword: string, newPassword: strin
   }
 
   try {
-    const storedUser = localStorage.getItem("user");
+    const storedUser = getStoredUser();
     if (storedUser) {
       const parsed = JSON.parse(storedUser);
       parsed.mustChangePassword = false;
-      localStorage.setItem("user", JSON.stringify(parsed));
+      setStoredUser(JSON.stringify(parsed));
     }
   } catch {
     // Ignore local storage parsing errors.
   }
 
   try {
-    const storedUserData = localStorage.getItem("userData");
+    const storedUserData = getStoredUserData();
     if (storedUserData) {
       const parsed = JSON.parse(storedUserData);
       parsed.mustChangePassword = false;
-      localStorage.setItem("userData", JSON.stringify(parsed));
+      setStoredUserData(JSON.stringify(parsed));
     }
   } catch {
     // Ignore local storage parsing errors.
@@ -360,7 +334,7 @@ export const changePassword = async (currentPassword: string, newPassword: strin
 };
 
 export const requestForgotPassword = async (email: string): Promise<string> => {
-  const response = await fetch(`${BASE_URL}/auth/forgot-password`, {
+  const response = await apiFetch("/auth/forgot-password", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -378,12 +352,12 @@ export const requestForgotPassword = async (email: string): Promise<string> => {
 
   return typeof body?.message === "string"
     ? body.message
-    : "If the account exists, a password reset request has been submitted.";
+    : "If the account exists, a password reset request has been submitted for administrator approval.";
 };
 
 // Example of how to use the token in API calls
 export const updateEvent = async (eventId: number, eventData: UpdateEventPayload) => {
-  const response = await fetch(`${BASE_URL}/events/${eventId}`, {
+  const response = await apiFetch(`/api/events/${eventId}`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',

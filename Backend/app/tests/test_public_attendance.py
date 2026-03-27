@@ -12,6 +12,7 @@ from app.models.school import School
 from app.models.user import StudentProfile, User
 from app.routers import public_attendance
 from app.services.attendance_face_scan import get_registered_face_candidates_for_event
+from app.services.event_time_status import get_event_timezone
 from app.services.face_recognition import DetectedFaceProbe, LivenessResult
 
 
@@ -129,7 +130,7 @@ def _create_event(
     departments: list[Department] | None = None,
     programs: list[Program] | None = None,
 ) -> Event:
-    now = datetime.now().replace(microsecond=0)
+    now = datetime.now(get_event_timezone()).replace(tzinfo=None, microsecond=0)
     event = Event(
         school_id=school.id,
         name=name,
@@ -474,7 +475,9 @@ def test_public_multi_face_scan_uses_phase_based_sign_in_and_sign_out_rules(
     assert second.status_code == 200
     assert second.json()["outcomes"][0]["action"] == "already_signed_in"
 
-    event.end_datetime = datetime.now().replace(microsecond=0) - timedelta(minutes=1)
+    event.end_datetime = (
+        datetime.now(get_event_timezone()).replace(tzinfo=None, microsecond=0) - timedelta(minutes=1)
+    )
     event.status = EventStatus.ONGOING
     test_db.add(event)
     test_db.commit()

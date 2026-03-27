@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import NavbarAdmin from "../components/NavbarAdmin";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
+import { NavbarStudent } from "../components/NavbarStudent";
 import {
+  dispatchEventReminderNotifications,
   dispatchLowAttendanceNotifications,
   dispatchMissedEventsNotifications,
+  fetchMyNotificationInbox,
   fetchNotificationLogs,
   fetchNotificationPreferences,
   NotificationDispatchSummary,
@@ -13,23 +16,27 @@ import {
   sendTestNotification,
   updateNotificationPreferences,
 } from "../api/platformOpsApi";
-import { isCampusAdminRole } from "../utils/roleUtils";
-
-const getStoredRoles = (): string[] => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as { roles?: string[] };
-    return Array.isArray(parsed.roles) ? parsed.roles : [];
-  } catch {
-    return [];
-  }
-};
+import {
+  isStoredCampusAdmin,
+  readStoredUserSession,
+} from "../lib/auth/storedUser";
 
 const NotificationCenter = () => {
-  const roles = getStoredRoles();
-  const isSchoolIT = roles.some(isCampusAdminRole);
-  const NavbarComponent = isSchoolIT ? NavbarSchoolIT : NavbarAdmin;
+  const storedUser = useMemo(() => readStoredUserSession(), []);
+  const normalizedRoles = useMemo(
+    () => (storedUser?.roles ?? []).map((role) => role.trim().toLowerCase()),
+    [storedUser]
+  );
+  const isStudentView =
+    normalizedRoles.includes("student") &&
+    !normalizedRoles.includes("admin") &&
+    !normalizedRoles.includes("campus_admin");
+  const isSchoolIT = !isStudentView && isStoredCampusAdmin();
+  const NavbarComponent = isStudentView
+    ? NavbarStudent
+    : isSchoolIT
+      ? NavbarSchoolIT
+      : NavbarAdmin;
 
   const [preferences, setPreferences] = useState<NotificationPreference | null>(null);
   const [logs, setLogs] = useState<NotificationLogItem[]>([]);
@@ -44,7 +51,7 @@ const NotificationCenter = () => {
     try {
       const [prefData, logsData] = await Promise.all([
         fetchNotificationPreferences(),
-        fetchNotificationLogs({ limit: 100 }),
+        isStudentView ? fetchMyNotificationInbox(100) : fetchNotificationLogs({ limit: 100 }),
       ]);
       setPreferences(prefData);
       setLogs(logsData);
@@ -56,8 +63,8 @@ const NotificationCenter = () => {
   };
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [isStudentView]);
 
   const savePreferences = async () => {
     if (!preferences) return;
@@ -84,21 +91,30 @@ const NotificationCenter = () => {
     }
   };
 
+  const pageTitle = isStudentView ? "My Notifications" : "Notification Center";
+  const pageDescription = isStudentView
+    ? "Review attendance alerts, sign-in confirmations, sign-out confirmations, and reminders."
+    : "Manage notification channels, review the latest delivery logs, and dispatch reminders.";
+
   return (
-    <div style={{ minHeight: "100vh", background: "#f8f9fa" }}>
+    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #f4f7fb 0%, #e7eef8 100%)" }}>
       <NavbarComponent />
       <main className="container py-4">
-        <h2 className="mb-3">Notification Center</h2>
+        <div className="mb-4">
+          <h2 className="mb-2">{pageTitle}</h2>
+          <p className="text-muted mb-0">{pageDescription}</p>
+        </div>
+
         {error && <div className="alert alert-danger">{error}</div>}
-        {summary && (
+        {summary && !isStudentView && (
           <div className="alert alert-info">
             <strong>{summary.category}</strong>: processed {summary.processed_users}, sent {summary.sent},
             failed {summary.failed}, skipped {summary.skipped}
           </div>
         )}
 
-        <div className="card mb-4">
-          <div className="card-header">Notification Preferences</div>
+        <div className="card mb-4 shadow-sm border-0">
+          <div className="card-header bg-white">Notification Preferences</div>
           <div className="card-body">
             {loading || !preferences ? (
               <p className="mb-0">Loading...</p>
@@ -115,7 +131,7 @@ const NotificationCenter = () => {
                     }
                   />
                   <label className="form-check-label" htmlFor="pref-email">
-                    Email enabled
+                    Email notifications
                   </label>
                 </div>
                 <div className="form-check mb-2">
@@ -131,7 +147,7 @@ const NotificationCenter = () => {
                     }
                   />
                   <label className="form-check-label" htmlFor="pref-missed">
-                    Missed events alerts
+                    Missed event alerts
                   </label>
                 </div>
                 <div className="form-check mb-2">
@@ -163,7 +179,7 @@ const NotificationCenter = () => {
                     }
                   />
                   <label className="form-check-label" htmlFor="pref-security">
-                    Account security alerts
+                    Security alerts
                   </label>
                 </div>
                 <button className="btn btn-primary" onClick={savePreferences} disabled={saving}>
@@ -174,38 +190,47 @@ const NotificationCenter = () => {
           </div>
         </div>
 
-        <div className="card mb-4">
-          <div className="card-header">Dispatch Actions</div>
-          <div className="card-body d-flex flex-wrap gap-2">
-            <button className="btn btn-outline-primary" onClick={() => runAction(() => sendTestNotification())}>
-              Send Test
-            </button>
-            <button
-              className="btn btn-outline-warning"
-              onClick={() => runAction(() => dispatchMissedEventsNotifications({ lookback_days: 14 }))}
-            >
-              Run Missed Events
-            </button>
-            <button
-              className="btn btn-outline-danger"
-              onClick={() => runAction(() => dispatchLowAttendanceNotifications({ threshold_percent: 75 }))}
-            >
-              Run Low Attendance
-            </button>
+        {!isStudentView ? (
+          <div className="card mb-4 shadow-sm border-0">
+            <div className="card-header bg-white">Dispatch Actions</div>
+            <div className="card-body d-flex flex-wrap gap-2">
+              <button className="btn btn-outline-primary" onClick={() => runAction(() => sendTestNotification())}>
+                Send Test
+              </button>
+              <button
+                className="btn btn-outline-secondary"
+                onClick={() => runAction(() => dispatchEventReminderNotifications({ lead_hours: 24 }))}
+              >
+                Run Event Reminders
+              </button>
+              <button
+                className="btn btn-outline-warning"
+                onClick={() => runAction(() => dispatchMissedEventsNotifications({ lookback_days: 14 }))}
+              >
+                Run Missed Events
+              </button>
+              <button
+                className="btn btn-outline-danger"
+                onClick={() => runAction(() => dispatchLowAttendanceNotifications({ threshold_percent: 75 }))}
+              >
+                Run Low Attendance
+              </button>
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        <div className="card">
-          <div className="card-header">Recent Notification Logs</div>
+        <div className="card shadow-sm border-0">
+          <div className="card-header bg-white">
+            {isStudentView ? "Recent Activity" : "Recent Notification Logs"}
+          </div>
           <div className="table-responsive">
             <table className="table table-sm table-striped mb-0">
               <thead>
                 <tr>
-                  <th>ID</th>
                   <th>Category</th>
                   <th>Channel</th>
                   <th>Status</th>
-                  <th>User</th>
+                  {!isStudentView ? <th>User</th> : null}
                   <th>Created</th>
                   <th>Subject</th>
                 </tr>
@@ -213,19 +238,21 @@ const NotificationCenter = () => {
               <tbody>
                 {logs.map((log) => (
                   <tr key={log.id}>
-                    <td>{log.id}</td>
                     <td>{log.category}</td>
                     <td>{log.channel}</td>
                     <td>{log.status}</td>
-                    <td>{log.user_id ?? "-"}</td>
+                    {!isStudentView ? <td>{log.user_id ?? "-"}</td> : null}
                     <td>{new Date(log.created_at).toLocaleString()}</td>
-                    <td>{log.subject}</td>
+                    <td>
+                      <div>{log.subject}</div>
+                      <small className="text-muted">{log.message}</small>
+                    </td>
                   </tr>
                 ))}
                 {!loading && logs.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-center py-4">
-                      No notification logs yet.
+                    <td colSpan={isStudentView ? 5 : 6} className="text-center py-4">
+                      No notifications yet.
                     </td>
                   </tr>
                 )}

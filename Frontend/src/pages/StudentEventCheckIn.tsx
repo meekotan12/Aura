@@ -35,20 +35,18 @@ import {
   setStudentFaceEnrollmentRequired,
 } from "../api/studentFaceEnrollmentApi";
 import { resolveDashboardPath } from "../authFlow";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import CameraFeed from "../components/CameraFeed";
 import {
   formatManilaDateTime,
   getEventWindowStage,
   getStudentEventActionState,
 } from "../utils/eventAttendanceWindow";
+import { getAttendanceTimestamp } from "../utils/attendanceDateTime";
 import { sanitizeRedirectPath } from "../utils/redirects";
+import { normalizeRole } from "../utils/roleUtils";
 import "../css/FacialVerification.css";
 import "../css/StudentEventCheckIn.css";
-
-type StoredUser = {
-  id?: number;
-  roles?: string[];
-};
 
 type ScanPhase =
   | "loading"
@@ -64,27 +62,11 @@ const RESULT_REVEAL_DELAY_MS = 700;
 const GEOLOCATION_TIMEOUT_MS = 18000;
 const GEOLOCATION_MAX_INPUT_ACCURACY_M = 5000;
 
-const normalizeRole = (role: string) =>
-  role.trim().toLowerCase().replace(/_/g, "-");
-
 const resolveStudentUpcomingEventsPath = () =>
   sanitizeRedirectPath("/student_upcoming_events", "/student_dashboard");
 
 const resolveStudentEventsAttendedPath = () =>
   sanitizeRedirectPath("/student_events_attended", "/student_dashboard");
-
-const parseStoredUser = (): StoredUser | null => {
-  const raw = localStorage.getItem("user");
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as StoredUser;
-  } catch {
-    return null;
-  }
-};
 
 const hasGeofence = (event: Event) =>
   event.geo_latitude != null &&
@@ -345,7 +327,7 @@ const buildAttendanceMessage = (
 const StudentEventCheckIn = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const storedUser = useMemo(parseStoredUser, []);
+  const storedUser = useMemo(() => readStoredUserSession(), []);
   const normalizedRoles = useMemo(
     () => (storedUser?.roles || []).map(normalizeRole),
     [storedUser]
@@ -362,6 +344,7 @@ const StudentEventCheckIn = () => {
 
   const latestFrameRef = useRef<Blob | null>(null);
   const scanSessionRef = useRef(0);
+  const activeActionKeyRef = useRef<string | null>(null);
   const locationPromiseRef = useRef<Promise<StudentEventLocationPayload> | null>(
     null
   );
@@ -384,6 +367,7 @@ const StudentEventCheckIn = () => {
     "Align your face inside the circle."
   );
   const [studentLabel, setStudentLabel] = useState("Student");
+  const [faceScanBypassEnabled, setFaceScanBypassEnabled] = useState(false);
   const [events, setEvents] = useState<Event[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
@@ -407,7 +391,7 @@ const StudentEventCheckIn = () => {
         continue;
       }
 
-      if (new Date(record.time_in).getTime() > new Date(existing.time_in).getTime()) {
+      if (getAttendanceTimestamp(record.time_in) > getAttendanceTimestamp(existing.time_in)) {
         recordsByEvent.set(record.event_id, record);
       }
     }
@@ -601,6 +585,7 @@ const StudentEventCheckIn = () => {
         }
 
         setStudentLabel(faceStatus.studentId || "Student");
+        setFaceScanBypassEnabled(faceStatus.faceScanBypassEnabled);
 
         setLoadingMessage("Loading attendance windows...");
         const [allEvents, myAttendanceRecords] = await Promise.all([
@@ -624,11 +609,28 @@ const StudentEventCheckIn = () => {
     void loadPage();
   }, [navigate, normalizedRoles, storedUser]);
 
+  useEffect(() => {
+    if (!pageReady) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void Promise.all([
+        fetchAllEvents(true).then(setEvents),
+        fetchMyAttendanceRecords().then(setAttendanceRecords),
+      ]).catch(() => undefined);
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pageReady]);
+
   const finalizeScan = useCallback(
     async (
       sessionId: number,
       event: Event,
-      frameBlob: Blob
+      frameBlob?: Blob | null
     ) => {
       if (scanSessionRef.current !== sessionId || scanFinalizedRef.current) {
         return;
@@ -741,6 +743,7 @@ const StudentEventCheckIn = () => {
     }
 
     if (!selectedEvent) {
+      activeActionKeyRef.current = null;
       cancelScanSession();
       setPhase("empty");
       setStatusText("No geofenced event is currently available for attendance.");
@@ -752,6 +755,7 @@ const StudentEventCheckIn = () => {
       selectedEventActionState !== "sign_in" &&
       selectedEventActionState !== "sign_out"
     ) {
+      activeActionKeyRef.current = null;
       cancelScanSession();
       setPhase("empty");
       setResultMessage(null);
@@ -773,19 +777,39 @@ const StudentEventCheckIn = () => {
       return;
     }
 
+    const actionKey = [
+      selectedEvent.id,
+      selectedEventActionState,
+      selectedEventAttendance?.id ?? "none",
+      selectedEventAttendance?.completion_state ?? "pending",
+      faceScanBypassEnabled ? "bypass" : "face",
+    ].join(":");
+    if (
+      activeActionKeyRef.current === actionKey &&
+      (phase === "scanning" || phase === "submitting")
+    ) {
+      return;
+    }
+    activeActionKeyRef.current = actionKey;
+
     cancelScanSession();
     const sessionId = scanSessionRef.current;
+    const bypassMode = faceScanBypassEnabled;
 
-    setPhase("scanning");
-    setStreamEnabled(true);
+    setPhase(bypassMode ? "submitting" : "scanning");
+    setStreamEnabled(!bypassMode);
     setStatusText(
-      selectedEventActionState === "sign_out"
-        ? "Sign-out is open. Starting camera and checking event location..."
-        : selectedEventWindowStage === "early_check_in"
-          ? "Early check-in is open. Starting camera and checking event location..."
-          : selectedEventWindowStage === "late_check_in"
-            ? "Late check-in is open. Starting camera and checking event location..."
-            : "Absent check-in is active. Starting camera and checking event location..."
+      bypassMode
+        ? selectedEventActionState === "sign_out"
+          ? "Test account bypass is enabled. Verifying location and recording sign-out..."
+          : "Test account bypass is enabled. Verifying location and recording attendance..."
+        : selectedEventActionState === "sign_out"
+          ? "Sign-out is open. Starting camera and checking event location..."
+          : selectedEventWindowStage === "early_check_in"
+            ? "Early check-in is open. Starting camera and checking event location..."
+            : selectedEventWindowStage === "late_check_in"
+              ? "Late check-in is open. Starting camera and checking event location..."
+              : "Absent check-in is active. Starting camera and checking event location..."
     );
     setResultMessage(null);
     setLocationPhase("checking");
@@ -855,11 +879,18 @@ const StudentEventCheckIn = () => {
         throw error;
       }
     })();
+
+    if (bypassMode) {
+      void finalizeScan(sessionId, selectedEvent, null);
+    }
   }, [
     availableEvents.length,
     cancelScanSession,
+    faceScanBypassEnabled,
+    finalizeScan,
     pageReady,
     selectedEvent,
+    selectedEventAttendance,
     selectedEventActionState,
     selectedEventWindowStage,
   ]);
@@ -906,8 +937,12 @@ const StudentEventCheckIn = () => {
   const eventModeLabel =
     selectedEventActionState === "sign_out" ? "Event Sign Out" : "Event Attendance";
   const attendanceWindowHint =
-    selectedEventActionState === "sign_out"
+    faceScanBypassEnabled
+      ? "Test account bypass is active. The system will skip facial matching but still enforce location and event timing."
+      : selectedEventActionState === "sign_out"
       ? "Sign-out is currently open for your active attendance record."
+      : selectedEventWindowStage === "sign_out_pending"
+        ? "You are checked in. Sign-out opens after the configured event sign-out delay."
       : selectedEventWindowStage === "early_check_in"
         ? "Early check-in is open and valid scans will be marked present."
         : selectedEventWindowStage === "late_check_in"
@@ -1022,48 +1057,58 @@ const StudentEventCheckIn = () => {
 
               {phase === "scanning" || phase === "submitting" ? (
                 <div className="face-flow-scanner">
-                  <div
-                    className="face-flow-ring student-event-checkin-ring"
-                    style={
-                      {
-                        ["--face-progress" as string]: `${displayedProgress}%`,
-                      } as CSSProperties
-                    }
-                  >
-                    <div className="face-flow-ring__inner">
-                      <CameraFeed
-                        streamEnabled={streamEnabled}
-                        scanEnabled={phase === "scanning"}
-                        showControls={false}
-                        circleMask
-                        placeholderText=""
-                        onFrame={handleFrame}
-                        onCameraStateChange={(isOn) => {
-                          setCameraActive(isOn);
-                          if (phase === "scanning") {
-                            setStatusText(
-                              isOn
-                                ? selectedEventActionState === "sign_out"
-                                  ? "Verifying sign-out face and location..."
-                                  : selectedEventWindowStage === "early_check_in"
-                                    ? "Verifying early check-in face and location..."
-                                    : selectedEventWindowStage === "late_check_in"
-                                      ? "Verifying late check-in face and location..."
-                                      : "Verifying absent check-in face and location..."
-                                : selectedEventActionState === "sign_out"
-                                  ? "Starting camera for sign-out and checking event location..."
-                                  : "Starting camera and checking event location..."
-                            );
-                          }
-                        }}
-                        onScanError={(error) => {
-                          stopScanner();
-                          setPhase("error");
-                          setResultMessage(describeStudentEventCheckInError(error));
-                        }}
-                      />
+                  {faceScanBypassEnabled ? (
+                    <div className="student-event-checkin-bypass">
+                      <div className="face-flow-progress__value">TEST</div>
+                      <div className="face-flow-progress__label">
+                        Facial verification bypassed for this account
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div
+                      className="face-flow-ring student-event-checkin-ring"
+                      style={
+                        {
+                          ["--face-progress" as string]: `${displayedProgress}%`,
+                        } as CSSProperties
+                      }
+                    >
+                      <div className="face-flow-ring__inner">
+                        <CameraFeed
+                          streamEnabled={streamEnabled}
+                          scanEnabled={phase === "scanning"}
+                          scanIntervalMs={850}
+                          showControls={false}
+                          circleMask
+                          placeholderText=""
+                          onFrame={handleFrame}
+                          onCameraStateChange={(isOn) => {
+                            setCameraActive(isOn);
+                            if (phase === "scanning") {
+                              setStatusText(
+                                isOn
+                                  ? selectedEventActionState === "sign_out"
+                                    ? "Verifying sign-out face and location..."
+                                    : selectedEventWindowStage === "early_check_in"
+                                      ? "Verifying early check-in face and location..."
+                                      : selectedEventWindowStage === "late_check_in"
+                                        ? "Verifying late check-in face and location..."
+                                        : "Verifying absent check-in face and location..."
+                                  : selectedEventActionState === "sign_out"
+                                    ? "Starting camera for sign-out and checking event location..."
+                                    : "Starting camera and checking event location..."
+                              );
+                            }
+                          }}
+                          onScanError={(error) => {
+                            stopScanner();
+                            setPhase("error");
+                            setResultMessage(describeStudentEventCheckInError(error));
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="face-flow-progress">
                     <div className="face-flow-progress__value">
@@ -1075,11 +1120,13 @@ const StudentEventCheckIn = () => {
                   <div className="student-event-checkin-statuses">
                     <span
                       className={`student-event-checkin-status student-event-checkin-status--${
-                        cameraActive ? "ready" : "pending"
+                        faceScanBypassEnabled ? "ready" : cameraActive ? "ready" : "pending"
                       }`}
                     >
                       <FaShieldAlt />
-                      {statusText}
+                      {faceScanBypassEnabled
+                        ? "Biometric verification bypassed for the configured test account."
+                        : statusText}
                     </span>
                     <span
                       className={`student-event-checkin-status student-event-checkin-status--${locationPhase}`}

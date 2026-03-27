@@ -4,6 +4,11 @@
 
 This guide documents the computed attendance-window logic that now drives event check-in, sign-out, and workflow auto-sync.
 
+## Route Prefix Note
+
+- canonical private route families in this guide now live under `/api/events/*` and `/api/attendance/*`
+- the deprecated unprefixed `/events/*` and `/attendance/*` aliases were removed
+
 The backend keeps two related concepts:
 
 - stored workflow status on `events.status`: `upcoming`, `ongoing`, `completed`, `cancelled`
@@ -20,6 +25,7 @@ Per-event timing is now configured with:
 - `early_check_in_minutes`
 - `late_threshold_minutes`
 - `sign_out_grace_minutes`
+- `sign_out_open_delay_minutes`
 
 Default values for newly created events:
 
@@ -103,6 +109,7 @@ The service in `Backend/app/services/event_time_status.py` computes one of these
 - `early_check_in`
 - `late_check_in`
 - `absent_check_in`
+- `sign_out_pending`
 - `sign_out_open`
 - `closed`
 
@@ -115,7 +122,8 @@ Given:
 - `effective_present_until_at = present_until_override_at` when the override is active, otherwise `start_datetime`
 - `effective_late_until_at = late_until_override_at` when the override is active, otherwise `late_threshold_time`
 - `normal_sign_out_closes_at = end_datetime + sign_out_grace_minutes`
-- `effective_sign_out_closes_at = normal_sign_out_closes_at`
+- `sign_out_opens_at = end_datetime + sign_out_open_delay_minutes`
+- `effective_sign_out_closes_at = min(normal_sign_out_closes_at, sign_out_override_until)` when the override is set, otherwise `normal_sign_out_closes_at`
 
 The computed status is:
 
@@ -123,8 +131,9 @@ The computed status is:
 2. from `check_in_opens_at` until just before `start_datetime` -> `early_check_in`
 3. from exact `start_datetime` through `late_threshold_time`, but only while current time is still before `end_datetime` -> `late_check_in`
 4. after `late_threshold_time` until `end_datetime` -> `absent_check_in`
-5. from `end_datetime` through `effective_sign_out_closes_at` -> `sign_out_open`
-6. after `effective_sign_out_closes_at` -> `closed`
+5. from `end_datetime` until just before `sign_out_opens_at` -> `sign_out_pending`
+6. from `sign_out_opens_at` through `effective_sign_out_closes_at` -> `sign_out_open`
+7. after `effective_sign_out_closes_at` -> `closed`
 
 Important business rule:
 
@@ -140,6 +149,7 @@ Important business rule:
 - before `effective_present_until_at` -> allow, mark `present`
 - after that until `effective_late_until_at` -> allow, mark `late`
 - after that until `end_datetime` -> allow, mark `absent`
+- `sign_out_pending` -> reject new check-in
 - `sign_out_open` -> reject new check-in
 - `closed` -> reject
 
@@ -150,6 +160,7 @@ That means an event can already be `late_check_in` for workflow status purposes 
 `get_sign_out_decision()` returns:
 
 - allow only during the sign-out window from `end_datetime` through `end_datetime + sign_out_grace_minutes`
+- if `sign_out_open_delay_minutes > 0`, sign-out stays rejected during `sign_out_pending`
 - reject before sign-out opens
 - reject after the effective sign-out close
 
@@ -189,7 +200,7 @@ Example request body:
 
 Implementation:
 
-- `Backend/app/routers/events.py`
+- `Backend/app/routers/events/workflow.py`
 
 ## Workflow Auto-Sync Mapping
 
@@ -199,6 +210,7 @@ The workflow sync service maps computed time status to stored event status like 
 - `early_check_in` -> `upcoming`
 - `late_check_in` -> `ongoing`
 - `absent_check_in` -> `ongoing`
+- `sign_out_pending` -> `ongoing`
 - `sign_out_open` -> `ongoing`
 - `closed` -> `completed`
 

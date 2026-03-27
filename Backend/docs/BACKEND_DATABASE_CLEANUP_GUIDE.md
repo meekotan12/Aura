@@ -11,6 +11,7 @@ The cleanup migration removes these unused tables when they exist:
 - `ai_logs`
 - `anomaly_logs`
 - `attendance_predictions`
+- `event_attendance`
 - `event_consumption_logs`
 - `event_flags`
 - `event_predictions`
@@ -19,6 +20,7 @@ The cleanup migration removes these unused tables when they exist:
 - `outbox_events`
 - `recommendation_cache`
 - `security_alerts`
+- `ssg_event_attendance`
 - `student_risk_scores`
 
 ## Why These Tables Were Removed
@@ -28,10 +30,12 @@ The cleanup migration removes these unused tables when they exist:
 - they do not support the current notifications, security, governance, import, attendance, event, or auth flows
 - the repo dump showed them as empty legacy tables
 
-## Migration
+## Migrations
 
 - migration file: `Backend/alembic/versions/9b3e1f2c4d5a_drop_legacy_unused_tables.py`
-- migration behavior: drops the legacy tables with `DROP TABLE IF EXISTS ... CASCADE`
+  - drops the first batch of legacy unused tables with `DROP TABLE IF EXISTS ... CASCADE`
+- migration file: `Backend/alembic/versions/a6c4e2f1b9d7_drop_legacy_event_attendance_tables.py`
+  - drops the remaining legacy `event_attendance` and `ssg_event_attendance` tables with `DROP TABLE IF EXISTS ... CASCADE`
 - downgrade: intentionally unsupported because the removed tables are legacy-only and not part of the active backend
 
 ## How To Apply
@@ -58,6 +62,7 @@ If you run Alembic from the host machine:
        'ai_logs',
        'anomaly_logs',
        'attendance_predictions',
+       'event_attendance',
        'event_consumption_logs',
        'event_flags',
        'event_predictions',
@@ -66,6 +71,7 @@ If you run Alembic from the host machine:
        'outbox_events',
        'recommendation_cache',
        'security_alerts',
+       'ssg_event_attendance',
        'student_risk_scores'
      );
    ```

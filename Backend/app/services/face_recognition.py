@@ -8,13 +8,13 @@ from __future__ import annotations
 # --- Standard Python libraries ---
 import base64
 import hashlib
+import importlib
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 # --- Third-party libraries ---
-import face_recognition
 import numpy as np
 from fastapi import HTTPException, status
 from PIL import Image, UnidentifiedImageError
@@ -118,6 +118,28 @@ class FaceRecognitionService:
         if configured:
             return Path(configured)
         return Path(__file__).resolve().parents[2] / "models" / "MiniFASNetV2.onnx"
+
+    def face_recognition_status(self) -> tuple[bool, str | None]:
+        """Return whether the `face_recognition` runtime is available."""
+        try:
+            self._require_face_recognition_library()
+        except HTTPException:
+            return False, "face_recognition_unavailable"
+        return True, None
+
+    @staticmethod
+    def _require_face_recognition_library() -> Any:
+        """Load the optional face-recognition runtime only when a face route needs it."""
+        try:
+            return importlib.import_module("face_recognition")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Face recognition runtime is unavailable. "
+                    "Install the 'face_recognition' dependency to use face features."
+                ),
+            ) from exc
 
     # ---------------------------------------------
     # Static utilities
@@ -281,6 +303,7 @@ class FaceRecognitionService:
 
     def check_liveness(self, rgb_image: np.ndarray) -> LivenessResult:
         """Run the anti-spoof check and return whether the face is real or fake."""
+        face_recognition_module = self._require_face_recognition_library()
         ready, reason = self.anti_spoof_status()
         if not ready:
             if self.settings.allow_liveness_bypass_when_model_missing:
@@ -298,7 +321,7 @@ class FaceRecognitionService:
                 detail=detail,
             )
 
-        face_locations = face_recognition.face_locations(rgb_image)
+        face_locations = face_recognition_module.face_locations(rgb_image)
         if not face_locations:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -406,8 +429,9 @@ class FaceRecognitionService:
         max_faces: int | None = None,
     ) -> list[DetectedFaceProbe]:
         """Detect all faces in a probe image and return per-face liveness and encodings."""
+        face_recognition_module = self._require_face_recognition_library()
         rgb_image = self.load_rgb_from_bytes(image_bytes)
-        face_locations = face_recognition.face_locations(rgb_image)
+        face_locations = face_recognition_module.face_locations(rgb_image)
         if not face_locations:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -420,7 +444,7 @@ class FaceRecognitionService:
                 detail=f"Too many faces detected in one frame. Maximum allowed is {max_faces}.",
             )
 
-        encodings = face_recognition.face_encodings(
+        encodings = face_recognition_module.face_encodings(
             rgb_image,
             known_face_locations=face_locations,
         )
@@ -517,3 +541,15 @@ class FaceRecognitionService:
             confidence=max(0.0, 1.0 - best_distance),
             candidate=best_candidate,
         )
+
+
+def is_face_scan_bypass_enabled_for_email(email: str | None) -> bool:
+    if not email:
+        return False
+    settings = get_settings()
+    normalized_email = email.strip().lower()
+    return normalized_email in set(settings.face_scan_bypass_emails)
+
+
+def is_face_scan_bypass_enabled_for_user(user: Any) -> bool:
+    return is_face_scan_bypass_enabled_for_email(getattr(user, "email", None))

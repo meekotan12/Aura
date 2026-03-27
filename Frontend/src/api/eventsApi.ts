@@ -1,4 +1,6 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { buildApiUrl } from "./apiUrl";
+import { buildAuthHeaders } from "../lib/api/client";
+
 const EVENTS_CACHE_TTL_MS = 60_000;
 
 export type GovernanceContext = "SSG" | "SG" | "ORG";
@@ -16,6 +18,8 @@ export interface Event {
   early_check_in_minutes?: number;
   late_threshold_minutes?: number;
   sign_out_grace_minutes?: number;
+  sign_out_open_delay_minutes?: number;
+  sign_out_override_until?: string | null;
   present_until_override_at?: string | null;
   late_until_override_at?: string | null;
   start_datetime: string;
@@ -36,6 +40,7 @@ export interface CreateEventPayload {
   early_check_in_minutes?: number;
   late_threshold_minutes?: number;
   sign_out_grace_minutes?: number;
+  sign_out_open_delay_minutes?: number;
   start_datetime: string;
   end_datetime: string;
   status?: EventStatus;
@@ -52,8 +57,12 @@ export interface AttendanceRecord {
   check_in_status?: "present" | "late" | "absent" | null;
   check_out_status?: "present" | "absent" | null;
   status: "present" | "late" | "absent" | "excused";
+  display_status?: "present" | "late" | "absent" | "excused" | "incomplete";
+  completion_state?: "completed" | "incomplete";
+  is_valid_attendance?: boolean;
   method: "face_scan" | "manual";
   duration_minutes: number | null;
+  notes?: string | null;
 }
 
 export interface EventAttendanceWithStudent {
@@ -67,9 +76,12 @@ export interface EventAttendanceWithStudent {
     check_out_status?: "present" | "absent" | null;
     method: "face_scan" | "manual";
     status: "present" | "late" | "absent" | "excused";
+    display_status?: "present" | "late" | "absent" | "excused" | "incomplete";
+    completion_state?: "completed" | "incomplete";
+    is_valid_attendance?: boolean;
     notes?: string | null;
   };
-  student_id: string;
+  student_id: string | null;
   student_name: string;
 }
 
@@ -78,6 +90,14 @@ export interface EventStatsResponse {
   statuses: Partial<
     Record<
       "present" | "late" | "absent" | "excused",
+      {
+        count: number;
+        percentage: number;
+      }
+    >
+  > & Partial<
+    Record<
+      "incomplete",
       {
         count: number;
         percentage: number;
@@ -107,6 +127,7 @@ export interface UpdateEventPayload {
   early_check_in_minutes?: number;
   late_threshold_minutes?: number;
   sign_out_grace_minutes?: number;
+  sign_out_open_delay_minutes?: number;
   start_datetime?: string;
   end_datetime?: string;
   status?: EventStatus;
@@ -148,18 +169,7 @@ const parseError = async (response: Response, fallback: string): Promise<string>
 };
 
 const getAuthHeaders = (): HeadersInit => {
-  const token =
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token");
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+  return buildAuthHeaders();
 };
 
 const getCachedEvents = (key: string): Event[] | null => {
@@ -217,7 +227,7 @@ export const fetchAllEvents = async (
   }
 
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${query}`), {
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error("Network error");
@@ -237,7 +247,7 @@ export const createEvent = async (
   governanceContext?: GovernanceContext
 ): Promise<Event> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${query}`), {
     method: "POST",
     headers: {
       ...getAuthHeaders(),
@@ -266,7 +276,7 @@ export const updateEvent = async (
   governanceContext?: GovernanceContext
 ): Promise<Event> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${eventId}${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}${query}`), {
     method: "PATCH",
     headers: {
       ...getAuthHeaders(),
@@ -293,7 +303,7 @@ export const updateEventStatus = async (
     query.set("governance_context", governanceContext);
   }
 
-  const response = await fetch(`${BASE_URL}/events/${eventId}/status?${query.toString()}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}/status?${query.toString()}`), {
     method: "PATCH",
     headers: getAuthHeaders(),
   });
@@ -311,7 +321,7 @@ export const deleteEvent = async (
   governanceContext?: GovernanceContext
 ): Promise<void> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${eventId}${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}${query}`), {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -329,7 +339,7 @@ export const openSignOutEarly = async (
   governanceContext?: GovernanceContext
 ): Promise<Event> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${eventId}/sign-out/open-early${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}/sign-out/open-early${query}`), {
     method: "POST",
     headers: {
       ...getAuthHeaders(),
@@ -351,7 +361,7 @@ export const fetchEventById = async (
   governanceContext?: GovernanceContext
 ): Promise<Event> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${eventId}${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}${query}`), {
     headers: getAuthHeaders(),
   });
 
@@ -367,7 +377,7 @@ export const fetchEventStats = async (
   governanceContext?: GovernanceContext
 ): Promise<EventStatsResponse> => {
   const query = buildGovernanceContextQuery(governanceContext);
-  const response = await fetch(`${BASE_URL}/events/${eventId}/stats${query}`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}/stats${query}`), {
     headers: getAuthHeaders(),
   });
 
@@ -384,7 +394,7 @@ export const fetchEventAttendancesWithStudents = async (
 ): Promise<EventAttendanceWithStudent[]> => {
   const query = buildGovernanceContextQuery(governanceContext);
   const response = await fetch(
-    `${BASE_URL}/attendance/events/${eventId}/attendances-with-students${query}`,
+    buildApiUrl(`/api/attendance/events/${eventId}/attendances-with-students${query}`),
     {
       headers: getAuthHeaders(),
     }
@@ -419,7 +429,7 @@ export const fetchEventsByStatus = async (
   if (governanceContext) {
     query.set("governance_context", governanceContext);
   }
-  const response = await fetch(`${BASE_URL}/events/?${query.toString()}`, {
+  const response = await fetch(buildApiUrl(`/api/events/?${query.toString()}`), {
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error("Network error");
@@ -451,7 +461,7 @@ export const fetchEventsAttended = async (): Promise<Event[]> => {
 };
 
 export const fetchMyAttendanceRecords = async (): Promise<AttendanceRecord[]> => {
-  const response = await fetch(`${BASE_URL}/attendance/me/records`, {
+  const response = await fetch(buildApiUrl("/api/attendance/me/records"), {
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error(`Failed to fetch attendance history: ${response.status}`);

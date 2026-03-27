@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from app.models import Department, Program, Role, School, StudentProfile, User, UserRole
 from app.repositories.import_repository import ImportRepository
+from app.utils.passwords import hash_password_bcrypt
 
 
 def _create_school(test_db, *, code: str) -> School:
@@ -152,3 +153,67 @@ def test_existing_school_student_pairs_handles_multiple_chunks(test_db, monkeypa
         (school.id, "STU-10001"),
         (school.id, "STU-10002"),
     }
+
+
+def test_bulk_insert_students_auto_creates_catalog_entries(test_db):
+    school = _create_school(test_db, code="REPO-AUTO-CATALOG")
+    student_role = _get_or_create_role(test_db, name="student")
+    repo = ImportRepository(test_db)
+    shared_password_hash = hash_password_bcrypt("SharedImportPass123")
+
+    success_rows, errors = repo.bulk_insert_students(
+        [
+            {
+                "row_number": 2,
+                "school_id": school.id,
+                "student_id": "STU-20001",
+                "email": "auto.catalog@example.edu",
+                "first_name": "Auto",
+                "middle_name": "C",
+                "last_name": "Catalog",
+                "department_name": "Data Science",
+                "program_name": "BS Data Science",
+                "raw_row_data": {
+                    "Student_ID": "STU-20001",
+                    "Email": "auto.catalog@example.edu",
+                    "Last Name": "Catalog",
+                    "First Name": "Auto",
+                    "Middle Name": "C",
+                    "Department": "Data Science",
+                    "Course": "BS Data Science",
+                },
+            }
+        ],
+        student_role.id,
+        shared_password_hash=shared_password_hash,
+        trust_preview=True,
+    )
+    test_db.commit()
+
+    created_user = test_db.query(User).filter(User.email == "auto.catalog@example.edu").first()
+    created_profile = (
+        test_db.query(StudentProfile)
+        .filter(StudentProfile.school_id == school.id, StudentProfile.student_id == "STU-20001")
+        .first()
+    )
+    created_department = (
+        test_db.query(Department)
+        .filter(Department.school_id == school.id, Department.name == "Data Science")
+        .first()
+    )
+    created_program = (
+        test_db.query(Program)
+        .filter(Program.school_id == school.id, Program.name == "BS Data Science")
+        .first()
+    )
+
+    assert errors == []
+    assert len(success_rows) == 1
+    assert created_user is not None
+    assert created_user.password_hash == shared_password_hash
+    assert created_profile is not None
+    assert created_department is not None
+    assert created_program is not None
+    assert created_profile.department_id == created_department.id
+    assert created_profile.program_id == created_program.id
+    assert created_program.departments[0].id == created_department.id

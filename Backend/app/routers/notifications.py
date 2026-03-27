@@ -26,7 +26,9 @@ from app.schemas.notification import (
 )
 from app.services.notification_center_service import (
     dispatch_low_attendance_notifications,
+    dispatch_event_reminder_notifications,
     dispatch_missed_event_notifications,
+    get_notification_inbox_for_user,
     get_or_create_notification_preference,
     send_account_security_notification,
     send_notification_to_user,
@@ -119,6 +121,19 @@ def list_notification_logs(
     )
 
 
+@router.get("/inbox/me", response_model=list[NotificationLogItem])
+def list_my_notification_inbox(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: User = Depends(get_current_application_user),
+    db: Session = Depends(get_db),
+):
+    return get_notification_inbox_for_user(
+        db,
+        user_id=current_user.id,
+        limit=limit,
+    )
+
+
 @router.post("/test", response_model=NotificationDispatchSummary)
 def send_test_notification(
     payload: NotificationTestRequest,
@@ -181,6 +196,23 @@ def dispatch_low_attendance_alerts(
     )
     db.commit()
     return NotificationDispatchSummary(category="low_attendance", **result)
+
+
+@router.post("/dispatch/event-reminders", response_model=NotificationDispatchSummary)
+def dispatch_event_reminders(
+    school_id: int | None = Query(default=None),
+    lead_hours: int = Query(default=24, ge=1, le=168),
+    current_user: User = Depends(get_current_admin_or_campus_admin),
+    db: Session = Depends(get_db),
+):
+    scoped_school_id = _resolve_school_scope(current_user, school_id)
+    result = dispatch_event_reminder_notifications(
+        db,
+        school_id=scoped_school_id,
+        lead_hours=lead_hours,
+    )
+    db.commit()
+    return NotificationDispatchSummary(category="event_reminder", **result)
 
 
 @router.post("/dispatch/security", response_model=NotificationDispatchSummary)

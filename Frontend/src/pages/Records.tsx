@@ -17,6 +17,16 @@ import {
   Legend,
   ArcElement,
 } from "chart.js";
+import {
+  fetchStudentAttendanceOverview,
+  fetchStudentAttendanceReport,
+  type StudentAttendanceRecord,
+  type StudentAttendanceReport,
+} from "../api/attendanceApi";
+import {
+  formatAttendanceDate,
+  formatAttendanceTime,
+} from "../utils/attendanceDateTime";
 
 // Register ChartJS components
 ChartJS.register(
@@ -32,54 +42,6 @@ ChartJS.register(
 interface RecordsProps {
   role: string;
 }
-
-interface StudentAttendanceRecord {
-  id: number;
-  student_id: string;
-  full_name: string;
-  department_name: string | null;
-  program_name: string | null;
-  year_level: string;
-  total_events: number;
-  attendance_rate: number;
-  last_attendance: string | null;
-}
-
-interface AttendanceDetail {
-  id: number;
-  event_id: number;
-  event_name: string;
-  event_location: string;
-  event_date: string;
-  time_in: string | null;
-  time_out: string | null;
-  status: "present" | "late" | "absent" | "excused";
-  method: string;
-  notes: string | null;
-  duration_minutes: number | null;
-}
-
-interface StudentAttendanceReport {
-  student: {
-    student_id: string;
-    student_name: string;
-    total_events: number;
-    attended_events: number;
-    late_events: number;
-    absent_events: number;
-    excused_events: number;
-    attendance_rate: number;
-    last_attendance: string | null;
-  };
-  attendance_records: AttendanceDetail[];
-  monthly_stats: Record<
-    string,
-    { present: number; late: number; absent: number; excused: number }
-  >;
-  event_type_stats: Record<string, number>;
-}
-
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export const Records: React.FC<RecordsProps> = ({ role }) => {
   const { student_id } = useParams();
@@ -114,25 +76,11 @@ export const Records: React.FC<RecordsProps> = ({ role }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem("authToken");
-      let url = `${BASE_URL}/attendance/students/overview?`;
-      if (governanceContext) url += `&governance_context=${governanceContext}`;
-
-      // Add date range filters if they exist
-      if (startDate) url += `&start_date=${startDate}`;
-      if (endDate) url += `&end_date=${endDate}`;
-
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const data = await fetchStudentAttendanceOverview({
+        governanceContext: governanceContext ?? undefined,
+        startDate,
+        endDate,
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
       setOverviewData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch records");
@@ -146,26 +94,12 @@ export const Records: React.FC<RecordsProps> = ({ role }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem("authToken");
-      let url = `${BASE_URL}/attendance/students/${id}/report?`;
-      if (governanceContext) url += `&governance_context=${governanceContext}`;
-
-      // Add filters to the report request
-      if (startDate) url += `&start_date=${startDate}`;
-      if (endDate) url += `&end_date=${endDate}`;
-      if (statusFilter !== "all") url += `&status=${statusFilter}`;
-
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const data = await fetchStudentAttendanceReport(id, {
+        governanceContext: governanceContext ?? undefined,
+        startDate,
+        endDate,
+        status: statusFilter,
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
       setReportData(data);
     } catch (err) {
       setError(
@@ -194,7 +128,7 @@ export const Records: React.FC<RecordsProps> = ({ role }) => {
 
   const filteredRecords = overviewData.filter(
     (record) =>
-      record.student_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (record.student_id ?? "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       record.full_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -203,6 +137,9 @@ export const Records: React.FC<RecordsProps> = ({ role }) => {
     reportData?.attendance_records.filter(
       (record) => statusFilter === "all" || record.status === statusFilter
     ) || [];
+
+  const formatTime = (timeString: string | null) => formatAttendanceTime(timeString);
+  const formatDate = (timeString: string | null) => formatAttendanceDate(timeString);
 
   const getSsgStatusToneClass = (status: string) => {
     switch (status) {
@@ -216,23 +153,6 @@ export const Records: React.FC<RecordsProps> = ({ role }) => {
       default:
         return "ssg-badge--member";
     }
-  };
-
-  const formatTime = (timeString: string | null) => {
-    if (!timeString) return "N/A";
-    return new Date(timeString).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const formatDate = (timeString: string | null) => {
-    if (!timeString) return "N/A";
-    return new Date(timeString).toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
   };
 
   const getStatusBadge = (status: string) => {

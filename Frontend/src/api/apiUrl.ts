@@ -1,4 +1,34 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+const DEFAULT_LOCAL_API_BASE_URL = "http://localhost:8000";
+
+const trimTrailingSlashes = (value: string): string => value.replace(/\/+$/, "");
+const normalizeConfiguredApiBaseUrl = (value: string): string => {
+  if (!value || value === "/api") {
+    return value;
+  }
+
+  return value.replace(/\/api$/, "");
+};
+
+const isLocalHostname = (hostname: string): boolean =>
+  hostname === "localhost" || hostname === "127.0.0.1";
+
+const resolveApiBaseUrl = (): string => {
+  const configuredApiBaseUrl = normalizeConfiguredApiBaseUrl(trimTrailingSlashes(
+    (import.meta.env.VITE_API_URL || "").trim()
+  ));
+
+  if (configuredApiBaseUrl) {
+    return configuredApiBaseUrl;
+  }
+
+  if (typeof window !== "undefined" && isLocalHostname(window.location.hostname)) {
+    return DEFAULT_LOCAL_API_BASE_URL;
+  }
+
+  return "";
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const normalizePath = (path: string): string => {
   if (!path) {
@@ -8,28 +38,15 @@ const normalizePath = (path: string): string => {
   return path.startsWith("/") ? path : `/${path}`;
 };
 
-const collapseRepeatedApiPrefix = (path: string): string => {
-  let normalizedPath = path;
-
-  while (normalizedPath.startsWith("/api/api/")) {
-    normalizedPath = normalizedPath.replace(/^\/api/, "");
-  }
-
-  return normalizedPath;
-};
-
 export const buildApiUrl = (path: string): string => {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
   }
 
-  const normalizedPath = collapseRepeatedApiPrefix(normalizePath(path));
+  const normalizedPath = normalizePath(path);
 
-  if (API_BASE_URL === "/api") {
-    // Some backend routers already include an /api prefix in FastAPI.
-    // In Vite dev we still need the proxy prefix in front, so the browser
-    // requests /api/api/... and the proxy rewrites only the first /api.
-    return `${API_BASE_URL}${normalizedPath}`;
+  if (!API_BASE_URL || API_BASE_URL === "/api") {
+    return normalizedPath;
   }
 
   return `${API_BASE_URL}${normalizedPath}`;

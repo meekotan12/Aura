@@ -14,22 +14,10 @@ import {
   updateMfaStatus,
   UserSessionItem,
 } from "../api/platformOpsApi";
-import { isCampusAdminRole } from "../utils/roleUtils";
-
-const getStoredRoles = (): string[] => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as { roles?: string[] };
-    return Array.isArray(parsed.roles) ? parsed.roles : [];
-  } catch {
-    return [];
-  }
-};
+import { isStoredCampusAdmin } from "../lib/auth/storedUser";
 
 const SecurityCenter = () => {
-  const roles = getStoredRoles();
-  const isSchoolIT = roles.some(isCampusAdminRole);
+  const isSchoolIT = isStoredCampusAdmin();
   const NavbarComponent = isSchoolIT ? NavbarSchoolIT : NavbarAdmin;
   const facialVerificationPath = isSchoolIT
     ? "/campus_admin_face_verification"

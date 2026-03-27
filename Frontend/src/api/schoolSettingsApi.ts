@@ -1,4 +1,6 @@
 import { buildApiUrl, buildAssetUrl } from "./apiUrl";
+import { buildAuthHeaders, extractApiErrorMessage as extractSharedApiErrorMessage } from "../lib/api/client";
+import { clearStoredAuthSession } from "../lib/auth/sessionStore";
 const SCHOOL_THEME_KEY = "schoolTheme";
 const SCHOOL_BRANDING_KEY = "schoolBranding";
 
@@ -106,28 +108,12 @@ interface ImportJobCreateResponse {
   status: string;
 }
 
-const getAuthToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
-
 const clearAuthState = () => {
-  localStorage.removeItem("authToken");
-  localStorage.removeItem("token");
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("user");
-  localStorage.removeItem("userData");
+  clearStoredAuthSession();
 };
 
 const withAuthHeaders = () => {
-  const token = getAuthToken();
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+  return buildAuthHeaders();
 };
 
 const extractApiErrorMessage = async (response: Response, fallback: string): Promise<string> => {
@@ -136,12 +122,7 @@ const extractApiErrorMessage = async (response: Response, fallback: string): Pro
     return "Session expired. Please log in again.";
   }
 
-  const body = await response.json().catch(() => null);
-  if (!body) return fallback;
-  if (typeof body.detail === "string" && body.detail.trim().length > 0) return body.detail;
-  if (typeof body.message === "string" && body.message.trim().length > 0) return body.message;
-  if (typeof body.error === "string" && body.error.trim().length > 0) return body.error;
-  return fallback;
+  return extractSharedApiErrorMessage(response, fallback);
 };
 
 export const normalizeLogoUrl = (logoUrl?: string | null): string | null => {

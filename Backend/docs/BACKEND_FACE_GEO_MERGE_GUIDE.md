@@ -4,6 +4,12 @@
 
 This document explains how the face recognition and geolocation verification logic from the `GITHUB` reference project was merged into the `RIZAL_v1` backend.
 
+## Route Prefix Note
+
+- canonical private routes in this guide now live under `/api/auth/security/*`, `/api/face/*`, `/api/events/*`, and `/api/attendance/*`
+- public kiosk routes under `/public-attendance/*` stay unchanged
+- the deprecated unprefixed private paths were removed
+
 It covers:
 
 - where the backend changes live
@@ -36,6 +42,7 @@ There are two related but different face flows in the backend:
 2. Student face attendance
    - used for student face registration and event attendance scanning
    - verifies liveness, face match, geofence, and attendance timing
+   - configured test accounts may bypass the biometric step while still using event scope, timing, and geofence validation
 
 3. Public login-page attendance kiosk
    - used by the unauthenticated login page
@@ -99,7 +106,7 @@ Geolocation is used in event attendance, not in privileged login.
   - public login-page nearby-event discovery
   - public multi-face attendance scanning
 
-- `Backend/app/routers/events.py`
+- `Backend/app/routers/events/`
   - event create and update with geofence fields
   - event location verification route
 
@@ -161,9 +168,11 @@ Geolocation is used in event attendance, not in privileged login.
 
 - `POST /face/register`
   - registers a student face using base64 image input
+  - may return `student_id = null` when the student profile has no assigned external student ID yet
 
 - `POST /face/register-upload`
   - registers a student face using uploaded file input
+  - may return `student_id = null` when the student profile has no assigned external student ID yet
 
 - `POST /face/verify`
   - verifies a student face image against the stored face reference
@@ -172,6 +181,7 @@ Geolocation is used in event attendance, not in privileged login.
   - combined attendance route
   - checks face, liveness, location, and sign-in or sign-out state
   - now limits the match candidate pool to the selected event scope instead of the whole school
+  - for emails listed in `FACE_SCAN_BYPASS_EMAILS`, the route may omit `image_base64` and resolves the student from the authenticated student account instead
 
 ### Public kiosk routes
 
@@ -303,6 +313,7 @@ This flow is for `admin` and `school_IT`.
    - face encoding extraction
    - passive liveness / anti-spoof check
 4. On success, the student face data is stored for future attendance matching.
+5. The success response can include `student_id = null` if the profile is valid but does not yet have a school-issued identifier.
 
 ### Important behavior
 
@@ -515,7 +526,7 @@ The active backend runtime is:
 - `Backend/app/routers/security_center.py`
 - `Backend/app/routers/face_recognition.py`
 - `Backend/app/routers/public_attendance.py`
-- `Backend/app/routers/events.py`
+- `Backend/app/routers/events/`
 - `Backend/app/services/face_recognition.py`
 - `Backend/app/services/attendance_face_scan.py`
 - `Backend/app/services/event_geolocation.py`

@@ -13,6 +13,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -23,6 +24,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    if not inspector.has_table("events"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("events")}
+    if "late_threshold_minutes" in columns:
+        return
+
     op.add_column(
         "events",
         sa.Column("late_threshold_minutes", sa.Integer(), nullable=False, server_default="0"),
@@ -30,4 +41,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    if not inspector.has_table("events"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("events")}
+    if "late_threshold_minutes" not in columns:
+        return
+
     op.drop_column("events", "late_threshold_minutes")

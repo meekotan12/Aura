@@ -124,22 +124,13 @@ def validate_and_transform_row(
         else:
             context.seen_emails.add(email)
 
-    department_key = row_data["Department"].strip().lower()
-    course_key = row_data["Course"].strip().lower()
+    department_name = " ".join(row_data["Department"].strip().split())
+    course_name = " ".join(row_data["Course"].strip().split())
+    department_key = department_name.lower()
+    course_key = course_name.lower()
 
     department_id = context.department_lookup.get(department_key)
-    if department_id is None and row_data["Department"]:
-        errors.append("Department does not exist")
-
     course_id = context.course_lookup.get(course_key)
-    if course_id is None and row_data["Course"]:
-        errors.append("Course does not exist")
-    elif (
-        department_id is not None
-        and course_id is not None
-        and (department_id, course_id) not in context.department_course_pairs
-    ):
-        errors.append("Course is not offered by the selected Department")
 
     if errors:
         return None, errors, row_data
@@ -152,6 +143,8 @@ def validate_and_transform_row(
         "last_name": row_data["Last Name"],
         "first_name": row_data["First Name"],
         "middle_name": row_data["Middle Name"],
+        "department_name": department_name,
+        "program_name": course_name,
         "department_id": department_id,
         "program_id": course_id,
     }

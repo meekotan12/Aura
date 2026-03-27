@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from app.models import (
     Department,
     Event,
+    PasswordResetRequest,
     Program,
     Role,
     School,
@@ -18,6 +19,7 @@ from app.models import (
     User,
     UserRole,
 )
+from app.routers import users as users_router
 from app.core.security import create_access_token, verify_password
 from app.utils.passwords import hash_password_bcrypt
 
@@ -79,7 +81,7 @@ def _auth_headers(user: User) -> dict[str, str]:
 
 def test_create_user_api_requires_auth(client):
     response = client.post(
-        "/users/",
+        f"/api/users/",
         json={
             "email": "apitest@example.com",
             "password": "StrongPassword123!",
@@ -158,15 +160,113 @@ def test_protected_endpoint(client, test_db):
     token = create_access_token({"sub": user.email})
 
     response = client.get(
-        "/users/me/",
+        f"/api/users/me/",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["email"] == "student@example.com"
 
-    response = client.get("/users/me/")
+    response = client.get(f"/api/users/me/")
     assert response.status_code == 401
+
+
+def test_users_router_supports_canonical_api_prefix(client, test_db):
+    school = _create_school(test_db, code="API-USERS")
+    role = Role(name="student")
+    test_db.add(role)
+    test_db.commit()
+
+    user = User(
+        email="canonical.users@example.com",
+        school_id=school.id,
+        first_name="Canonical",
+        last_name="User",
+        must_change_password=False,
+    )
+    user.set_password("StudentPass123!")
+    test_db.add(user)
+    test_db.commit()
+
+    test_db.add(UserRole(user_id=user.id, role_id=role.id))
+    test_db.commit()
+
+    token = create_access_token({"sub": user.email})
+    response = client.get(
+        "/api/users/me/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "canonical.users@example.com"
+
+
+def test_security_router_supports_canonical_api_prefix(client, test_db):
+    school = _create_school(test_db, code="API-SECURITY")
+    role = Role(name="student")
+    test_db.add(role)
+    test_db.commit()
+
+    user = User(
+        email="canonical.security@example.com",
+        school_id=school.id,
+        first_name="Canonical",
+        last_name="Security",
+        must_change_password=False,
+    )
+    user.set_password("StudentPass123!")
+    test_db.add(user)
+    test_db.commit()
+
+    test_db.add(UserRole(user_id=user.id, role_id=role.id))
+    test_db.commit()
+
+    token = create_access_token({"sub": user.email})
+    response = client.get(
+        "/api/auth/security/mfa-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_id"] == user.id
+    assert "mfa_enabled" in payload
+
+
+def test_legacy_users_router_alias_is_removed(client, test_db):
+    school = _create_school(test_db, code="LEGACY-USERS-REMOVED")
+    user = _create_user_with_role(
+        test_db,
+        email="legacy.users.removed@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+    )
+
+    response = client.get(
+        "/users/me/",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 404
+
+
+def test_legacy_security_router_alias_is_removed(client, test_db):
+    school = _create_school(test_db, code="LEGACY-SECURITY-REMOVED")
+    user = _create_user_with_role(
+        test_db,
+        email="legacy.security.removed@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+    )
+
+    response = client.get(
+        "/auth/security/mfa-status",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 404
 
 
 def test_health_endpoint_reports_pool_status(client):
@@ -272,7 +372,7 @@ def test_protected_endpoint_rejects_student_from_inactive_school(client, test_db
     test_db.commit()
 
     response = client.get(
-        "/users/me/",
+        f"/api/users/me/",
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -344,7 +444,7 @@ def test_deactivating_campus_admin_syncs_school_lockout_and_blocks_students(clie
     assert login_response.json()["detail"] == "This account's school is inactive."
 
     protected_response = client.get(
-        "/users/me/",
+        f"/api/users/me/",
         headers={"Authorization": f"Bearer {student_token}"},
     )
     assert protected_response.status_code == 403
@@ -532,6 +632,61 @@ def test_school_status_syncs_all_campus_admin_accounts_and_preserves_subscriptio
     assert school.subscription_status == "paid"
 
 
+def test_legacy_school_settings_import_template_route_returns_gone(client, test_db):
+    school = _create_school(test_db, code="LEGACY-IMPORT-TPL")
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="legacy.template.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Legacy",
+        last_name="Template",
+    )
+
+    response = client.get(
+        "/school-settings/me/users/import-template",
+        headers=_auth_headers(campus_admin),
+    )
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert "/api/admin/import-students/template" in detail
+    assert "/api/admin/import-students/preview" in detail
+    assert "/api/admin/import-students" in detail
+
+
+def test_legacy_school_settings_import_route_returns_gone(client, test_db):
+    school = _create_school(test_db, code="LEGACY-IMPORT-POST")
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="legacy.import.campus@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Legacy",
+        last_name="Import",
+    )
+
+    response = client.post(
+        "/school-settings/me/users/import",
+        headers=_auth_headers(campus_admin),
+        files={
+            "file": (
+                "students.csv",
+                b"email,first_name,last_name\nstudent@example.com,Test,Student\n",
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert "/api/admin/import-students/template" in detail
+    assert "/api/admin/import-students/preview" in detail
+    assert "/api/admin/import-students" in detail
+
+
 def test_inactive_user_stays_blocked_after_school_reactivation(client, test_db):
     school = _create_school(test_db, code="REACT-INACTIVE-USER")
     admin_user = _create_user_with_role(
@@ -612,7 +767,7 @@ def test_create_event_api_uses_default_attendance_window_values(client, test_db)
     end = start + timedelta(hours=2)
 
     response = client.post(
-        "/events/",
+        f"/api/events/",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Default Window Event",
@@ -676,7 +831,7 @@ def test_school_event_defaults_are_used_for_new_events(client, test_db):
     start = datetime.utcnow().replace(microsecond=0) + timedelta(days=1)
     end = start + timedelta(hours=2)
     create_response = client.post(
-        "/events/",
+        f"/api/events/",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "School Default Event",
@@ -723,7 +878,7 @@ def test_create_user_api_does_not_force_password_change_for_new_accounts(client,
     token = create_access_token({"sub": admin_user.email})
 
     response = client.post(
-        "/users/",
+        f"/api/users/",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "email": "fresh.user@example.com",
@@ -743,6 +898,137 @@ def test_create_user_api_does_not_force_password_change_for_new_accounts(client,
     assert created_user.must_change_password is False
     assert created_user.should_prompt_password_change is True
     assert verify_password(payload["generated_temporary_password"], created_user.password_hash)
+
+
+def test_create_student_account_api_creates_student_and_sends_welcome_email(
+    client,
+    test_db,
+    monkeypatch,
+):
+    school = _create_school(test_db, code="STUDENT-CREATE")
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="campus.create.student@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Campus",
+        last_name="Admin",
+    )
+
+    department = Department(school_id=school.id, name="School of Engineering")
+    program = Program(school_id=school.id, name="BS Information Technology")
+    department.programs.append(program)
+    test_db.add_all([department, program])
+    test_db.commit()
+
+    sent: dict[str, object] = {}
+    generated_password = "TempPass123A"
+
+    monkeypatch.setattr(
+        users_router,
+        "generate_secure_password",
+        lambda min_length=10, max_length=14: generated_password,
+    )
+
+    def fake_send_welcome_email(**kwargs):
+        sent.update(kwargs)
+
+    monkeypatch.setattr(users_router, "send_welcome_email", fake_send_welcome_email)
+
+    response = client.post(
+        f"/api/users/students/",
+        headers=_auth_headers(campus_admin),
+        json={
+            "email": "new.student@example.com",
+            "first_name": "New",
+            "middle_name": "",
+            "last_name": "Student",
+            "department_id": department.id,
+            "program_id": program.id,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["email"] == "new.student@example.com"
+    assert payload["school_id"] == school.id
+    assert any(role["role"]["name"] == "student" for role in payload["roles"])
+    assert payload["student_profile"]["department_id"] == department.id
+    assert payload["student_profile"]["program_id"] == program.id
+    assert payload["student_profile"]["year_level"] == 1
+
+    created_user = test_db.query(User).filter(User.email == "new.student@example.com").first()
+    assert created_user is not None
+    assert created_user.school_id == school.id
+    assert verify_password(generated_password, created_user.password_hash)
+
+    created_profile = (
+        test_db.query(StudentProfile)
+        .filter(StudentProfile.user_id == created_user.id)
+        .first()
+    )
+    assert created_profile is not None
+    assert created_profile.school_id == school.id
+    assert created_profile.department_id == department.id
+    assert created_profile.program_id == program.id
+    assert created_profile.year_level == 1
+
+    assert sent["recipient_email"] == "new.student@example.com"
+    assert sent["temporary_password"] == generated_password
+    assert sent["first_name"] == "New"
+    assert sent["password_is_temporary"] is True
+
+
+def test_create_student_account_api_rolls_back_when_welcome_email_fails(
+    client,
+    test_db,
+    monkeypatch,
+):
+    school = _create_school(test_db, code="STUDENT-EMAIL-FAIL")
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="campus.email.fail@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Campus",
+        last_name="Admin",
+    )
+
+    department = Department(school_id=school.id, name="School of Business")
+    program = Program(school_id=school.id, name="BS Accountancy")
+    department.programs.append(program)
+    test_db.add_all([department, program])
+    test_db.commit()
+
+    monkeypatch.setattr(
+        users_router,
+        "generate_secure_password",
+        lambda min_length=10, max_length=14: "TempPass123A",
+    )
+
+    def failing_send_welcome_email(**kwargs):
+        raise users_router.EmailDeliveryError("SMTP unavailable")
+
+    monkeypatch.setattr(users_router, "send_welcome_email", failing_send_welcome_email)
+
+    response = client.post(
+        f"/api/users/students/",
+        headers=_auth_headers(campus_admin),
+        json={
+            "email": "rollback.student@example.com",
+            "first_name": "Rollback",
+            "middle_name": "",
+            "last_name": "Student",
+            "department_id": department.id,
+            "program_id": program.id,
+        },
+    )
+
+    assert response.status_code == 502
+    assert "welcome email could not be delivered" in response.json()["detail"]
+    assert test_db.query(User).filter(User.email == "rollback.student@example.com").first() is None
 
 
 def test_get_all_users_returns_paged_student_profiles(client, test_db):
@@ -781,7 +1067,7 @@ def test_get_all_users_returns_paged_student_profiles(client, test_db):
     test_db.commit()
 
     response = client.get(
-        "/users/?skip=0&limit=2",
+        f"/api/users/?skip=0&limit=2",
         headers=_auth_headers(admin_user),
     )
 
@@ -878,6 +1164,107 @@ def test_change_password_accepts_current_password_for_passlib_hashed_user(client
     assert updated_user is not None
     assert updated_user.must_change_password is False
     assert verify_password(new_password, updated_user.password_hash)
+
+
+def test_forgot_password_creates_pending_request_for_student(client, test_db):
+    school = _create_school(test_db, code="FORGOT-STUDENT")
+    student = _create_user_with_role(
+        test_db,
+        email="forgot.student@example.com",
+        role_name="student",
+        password="StudentPass123!",
+        school_id=school.id,
+        first_name="Forgot",
+        last_name="Student",
+    )
+
+    response = client.post(
+        "/auth/forgot-password",
+        json={"email": student.email},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == (
+        "If the account exists, a password reset request has been submitted for administrator approval."
+    )
+
+    request_item = (
+        test_db.query(PasswordResetRequest)
+        .filter(PasswordResetRequest.user_id == student.id)
+        .first()
+    )
+    assert request_item is not None
+    assert request_item.school_id == school.id
+    assert request_item.status == "pending"
+    assert request_item.requested_email == student.email
+
+
+def test_forgot_password_creates_pending_request_for_campus_admin_and_hides_it_from_campus_admin_list(
+    client, test_db
+):
+    school = _create_school(test_db, code="FORGOT-CAMPUS")
+    platform_admin = _create_user_with_role(
+        test_db,
+        email="platform.forgot.admin@example.com",
+        role_name="admin",
+        password="AdminPass123!",
+        first_name="Platform",
+        last_name="Admin",
+    )
+    requesting_campus_admin = _create_user_with_role(
+        test_db,
+        email="requesting.campus.admin@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Requesting",
+        last_name="Campus",
+    )
+    reviewing_campus_admin = _create_user_with_role(
+        test_db,
+        email="reviewing.campus.admin@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+        first_name="Reviewing",
+        last_name="Campus",
+    )
+
+    response = client.post(
+        "/auth/forgot-password",
+        json={"email": requesting_campus_admin.email},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == (
+        "If the account exists, a password reset request has been submitted for administrator approval."
+    )
+
+    request_item = (
+        test_db.query(PasswordResetRequest)
+        .filter(PasswordResetRequest.user_id == requesting_campus_admin.id)
+        .first()
+    )
+    assert request_item is not None
+    assert request_item.school_id == school.id
+    assert request_item.status == "pending"
+    assert request_item.requested_email == requesting_campus_admin.email
+
+    platform_response = client.get(
+        "/auth/password-reset-requests",
+        headers=_auth_headers(platform_admin),
+    )
+    assert platform_response.status_code == 200
+    assert [item["email"] for item in platform_response.json()] == [
+        requesting_campus_admin.email
+    ]
+
+    campus_response = client.get(
+        "/auth/password-reset-requests",
+        headers=_auth_headers(reviewing_campus_admin),
+    )
+    assert campus_response.status_code == 200
+    assert campus_response.json() == []
 
 
 def test_login_response_recommends_password_change_when_prompt_flag_is_set(client, test_db):
@@ -1051,7 +1438,7 @@ def test_create_user_api_honors_submitted_password(client, test_db):
     submitted_password = "StudentPass123!"
 
     response = client.post(
-        "/users/",
+        f"/api/users/",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "email": "submitted.pass@example.com",
@@ -1097,7 +1484,7 @@ def test_campus_admin_create_user_api_rejects_non_student_roles(client, test_db)
     token = create_access_token({"sub": campus_admin.email})
 
     response = client.post(
-        "/users/",
+        f"/api/users/",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "email": "blocked.officer@example.com",
@@ -1152,7 +1539,7 @@ def test_campus_admin_cannot_update_roles_from_manage_users(client, test_db):
     token = create_access_token({"sub": campus_admin.email})
 
     response = client.put(
-        f"/users/{target_user.id}/roles",
+        f"/api/users/{target_user.id}/roles",
         headers={"Authorization": f"Bearer {token}"},
         json={"roles": ["student", "campus_admin"]},
     )

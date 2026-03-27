@@ -11,6 +11,7 @@ import {
   FaRegListAlt,
   FaSchool,
   FaSitemap,
+  FaUserPlus,
   FaUserShield,
   FaUsers,
 } from "react-icons/fa";
@@ -198,6 +199,22 @@ const SchoolITDashboard = () => {
                   </h5>
                   <p className="card-text text-muted mb-0">
                     Queue large school-scoped student imports with row-level error reporting.
+                  </p>
+                </div>
+              </div>
+            </Link>
+          </div>
+
+          <div className="col-md-6">
+            <Link to="/campus_admin_create_student" className="text-decoration-none">
+              <div className="card h-100 border-0 shadow-sm">
+                <div className="card-body">
+                  <h5 className="card-title">
+                    <FaUserPlus className="me-2" />
+                    Create Student
+                  </h5>
+                  <p className="card-text text-muted mb-0">
+                    Create one student account, keep the same school scope, and email the generated password automatically.
                   </p>
                 </div>
               </div>

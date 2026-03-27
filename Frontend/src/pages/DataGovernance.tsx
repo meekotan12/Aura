@@ -14,22 +14,12 @@ import {
   updateDataRequestStatus,
   updateGovernanceSettings,
 } from "../api/platformOpsApi";
-import { hasAnyRole, isCampusAdminRole } from "../utils/roleUtils";
-
-const getStoredRoles = (): string[] => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as { roles?: string[] };
-    return Array.isArray(parsed.roles) ? parsed.roles : [];
-  } catch {
-    return [];
-  }
-};
+import { isStoredCampusAdmin, readStoredUserSession } from "../lib/auth/storedUser";
+import { hasAnyRole } from "../utils/roleUtils";
 
 const DataGovernance = () => {
-  const roles = getStoredRoles();
-  const isSchoolIT = roles.some(isCampusAdminRole);
+  const roles = readStoredUserSession()?.roles ?? [];
+  const isSchoolIT = isStoredCampusAdmin();
   const isPrivileged = hasAnyRole(roles, "admin", "campus_admin");
   const NavbarComponent = isSchoolIT ? NavbarSchoolIT : NavbarAdmin;
 

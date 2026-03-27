@@ -13,6 +13,7 @@ import {
   FaRegListAlt,
   FaShieldAlt,
   FaSitemap,
+  FaUserPlus,
   FaUserShield,
   FaUserCircle,
   FaUsers,
@@ -101,6 +102,12 @@ const NavbarSchoolIT = () => {
               <NavLink to="/campus_admin_import_users" className="nav-link">
                 <FaFileImport className="me-2" />
                 Import Users
+              </NavLink>
+            </li>
+            <li className="nav-item">
+              <NavLink to="/campus_admin_create_student" className="nav-link">
+                <FaUserPlus className="me-2" />
+                Create Student
               </NavLink>
             </li>
             <li className="nav-item">

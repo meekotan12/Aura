@@ -8,12 +8,22 @@ import {
   FaUserCog,
 } from "react-icons/fa";
 import Modal from "react-modal";
-import { useNavigate } from "react-router-dom";
-
+import { fetchAcademicCatalog } from "../api/academicApi";
 import { normalizeLogoUrl } from "../api/schoolSettingsApi";
+import {
+  createStudentProfile,
+  deleteSchoolScopedUser,
+  deleteStudentProfile,
+  fetchSchoolScopedUsers,
+  updateSchoolScopedUser,
+  updateSchoolScopedUserRoles,
+  updateStudentProfile,
+  uploadUserPhoto,
+} from "../api/userApi";
 import { NavbarAdmin } from "../components/NavbarAdmin";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 import { useUser } from "../context/UserContext";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import { isCampusAdminRole, normalizeRole } from "../utils/roleUtils";
 import "../css/ManageUsers.css";
 
@@ -22,12 +32,12 @@ interface User {
   id: number;
   email: string;
   first_name: string;
-  middle_name?: string;
+  middle_name?: string | null;
   last_name: string;
   is_active: boolean;
   created_at: string;
   roles: UserRole[];
-  student_profile?: StudentProfile;
+  student_profile?: StudentProfile | null;
 }
 
 interface UserRole {
@@ -38,12 +48,12 @@ interface UserRole {
 
 interface StudentProfile {
   id: number;
-  student_id?: string;
-  year_level?: number;
-  department?: Department;
-  program?: Program;
-  department_id?: number; // Add this field to match your state management
-  program_id?: number; // Add this field to match your state management
+  student_id?: string | null;
+  year_level?: number | null;
+  department?: Department | null;
+  program?: Program | null;
+  department_id?: number | null; // Add this field to match your state management
+  program_id?: number | null; // Add this field to match your state management
 }
 
 interface Department {
@@ -67,17 +77,6 @@ enum RoleEnum {
 const USERS_PAGE_SIZE = 25;
 
 Modal.setAppElement("#root");
-
-const getStoredRoles = (): string[] => {
-  try {
-    const rawUser = localStorage.getItem("user");
-    if (!rawUser) return [];
-    const parsed = JSON.parse(rawUser);
-    return Array.isArray(parsed?.roles) ? parsed.roles : [];
-  } catch {
-    return [];
-  }
-};
 
 const formatRoleLabel = (roleName: string) => {
   switch (roleName) {
@@ -119,9 +118,8 @@ const formatCreatedAt = (value?: string) => {
 };
 
 export const ManageUsers: React.FC = () => {
-  const navigate = useNavigate();
   const { branding } = useUser();
-  const roles = getStoredRoles();
+  const roles = readStoredUserSession()?.roles ?? [];
   const isSchoolIT = roles.some(isCampusAdminRole);
   const NavbarComponent = isSchoolIT ? NavbarSchoolIT : NavbarAdmin;
   const canManageRoles = !isSchoolIT;
@@ -162,65 +160,7 @@ export const ManageUsers: React.FC = () => {
   const [editPreviewImage, setEditPreviewImage] = useState<string | null>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
 
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const API_URL = `${BASE_URL}/users`;
   const logoUrl = normalizeLogoUrl(branding?.logo_url);
-
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-      navigate("/login");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        navigate("/login");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
 
   // Fetch users from API
   const fetchUsers = async (pageIndex = currentPage) => {
@@ -231,11 +171,10 @@ export const ManageUsers: React.FC = () => {
 
     try {
       setError(null);
-      // Use canonical collection URL to avoid redirect-induced CORS failures.
-      const response = await fetchWithAuth(
-        `${API_URL}/?skip=${safePageIndex * USERS_PAGE_SIZE}&limit=${USERS_PAGE_SIZE}`
-      );
-      const data = await response.json();
+      const data = await fetchSchoolScopedUsers({
+        skip: safePageIndex * USERS_PAGE_SIZE,
+        limit: USERS_PAGE_SIZE,
+      });
 
       if (safePageIndex > 0 && data.length === 0) {
         setCurrentPage(safePageIndex - 1);
@@ -256,16 +195,10 @@ export const ManageUsers: React.FC = () => {
   // Fetch departments and programs
   const fetchDepartmentsAndPrograms = async () => {
     try {
-      const [deptsResponse, progsResponse] = await Promise.all([
-        fetchWithAuth(`${BASE_URL}/departments/`),
-        fetchWithAuth(`${BASE_URL}/programs/`),
-      ]);
-
-      const deptsData = await deptsResponse.json();
-      const progsData = await progsResponse.json();
-
-      setDepartments(deptsData);
-      setPrograms(progsData);
+      const { departments: nextDepartments, programs: nextPrograms } =
+        await fetchAcademicCatalog();
+      setDepartments(nextDepartments);
+      setPrograms(nextPrograms);
     } catch (err) {
       console.error("Error fetching departments or programs:", err);
     }
@@ -371,20 +304,14 @@ export const ManageUsers: React.FC = () => {
 
       // If roles are being updated
       if (canManageRoles && editedUser.roles) {
-        const roleUpdate = {
-          roles: editedUser.roles.map((r) => r.role.name),
-        };
-        await fetchWithAuth(`${API_URL}/${editedUser.id}/roles`, {
-          method: "PUT",
-          body: JSON.stringify(roleUpdate),
-        });
+        await updateSchoolScopedUserRoles(
+          editedUser.id,
+          editedUser.roles.map((r) => r.role.name)
+        );
       }
 
       // Update user basic info
-      await fetchWithAuth(`${API_URL}/${editedUser.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(userUpdateData),
-      });
+      await updateSchoolScopedUser(editedUser.id, userUpdateData);
 
       // Handle student profile
       const hasStudentRole = editedUser.roles?.some(
@@ -393,46 +320,32 @@ export const ManageUsers: React.FC = () => {
       if (hasStudentRole) {
         if (editedUser.student_profile) {
           // Update existing student profile
-          await fetchWithAuth(
-            `${API_URL}/student-profiles/${editedUser.student_profile.id}`,
-            {
-              method: "PATCH",
-              body: JSON.stringify(editStudentProfile),
-            }
-          );
+          await updateStudentProfile(editedUser.student_profile.id, {
+            student_id: editStudentProfile.student_id ?? undefined,
+            year_level: editStudentProfile.year_level ?? undefined,
+            department_id: editStudentProfile.department_id ?? undefined,
+            program_id: editStudentProfile.program_id ?? undefined,
+          });
         } else {
           // Create new student profile
-          const studentProfileCreate = {
+          await createStudentProfile({
             user_id: editedUser.id,
-            ...editStudentProfile,
-          };
-          await fetchWithAuth(`${API_URL}/admin/students/`, {
-            method: "POST",
-            body: JSON.stringify(studentProfileCreate),
+            student_id: editStudentProfile.student_id!,
+            year_level: editStudentProfile.year_level!,
+            department_id: editStudentProfile.department_id!,
+            program_id: editStudentProfile.program_id!,
           });
         }
       } else if (editedUser.student_profile) {
         // Remove student profile if role was removed
-        await fetchWithAuth(
-          `${API_URL}/student-profiles/${editedUser.student_profile.id}`,
-          {
-            method: "DELETE",
-          }
+        await deleteStudentProfile(
+          editedUser.student_profile.id
         );
       }
 
       // Handle profile image upload if changed
       if (editProfileImage) {
-        const formData = new FormData();
-        formData.append("file", editProfileImage);
-        await fetchWithAuth(`${API_URL}/${editedUser.id}/upload-photo`, {
-          method: "POST",
-          body: formData,
-          headers: {
-            // Remove Content-Type header for FormData
-            Authorization: `Bearer ${localStorage.getItem("authToken")}`,
-          },
-        });
+        await uploadUserPhoto(editedUser.id, editProfileImage);
       }
 
       // Refresh the user list
@@ -455,9 +368,7 @@ export const ManageUsers: React.FC = () => {
     if (deleteUserId === null) return;
 
     try {
-      await fetchWithAuth(`${API_URL}/${deleteUserId}`, {
-        method: "DELETE",
-      });
+      await deleteSchoolScopedUser(deleteUserId);
 
       // Refresh the user list
       if (users.length === 1 && currentPage > 0) {

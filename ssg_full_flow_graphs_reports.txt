@@ -1,0 +1,301 @@
+SSG Full Flow, Graphs, and Reports
+
+Overview
+- Scope: school-scoped SSG management with school-year-based role assignments
+- Main actors: School IT/Admin, SSG Officers, SSG Approvers, Students
+- Core workflow: setup -> assignment -> permission resolution -> announcements/events -> approval -> student visibility -> reminders -> attendance -> reporting
+
+Full SSG Flow
+
+1. School IT setup
+- School IT or Admin creates SSG roles for a specific school.
+- Each role has a role name and max member slots.
+- Example roles: President, Vice President, Secretary, Treasurer, Auditor, PRO, Committee Head.
+
+2. Permission setup
+- School IT or Admin assigns permissions to each SSG role.
+- Available permissions in the current system:
+  - post_announcement
+  - create_event
+  - approve_event
+  - edit_event
+  - delete_event
+
+3. Student assignment to SSG roles
+- School IT assigns students to SSG roles per school year.
+- The assignment is school-scoped and school-year-scoped.
+- Slot limits are enforced based on max_members.
+
+4. Permission resolution on login
+- When a user logs in, the system resolves:
+  - school scope
+  - school year
+  - assigned SSG roles
+  - effective SSG permissions
+- The dashboard only shows SSG actions the user is allowed to perform.
+
+5. Announcement workflow
+- Officers with post_announcement permission create announcements.
+- Announcements are school-wide within the same campus/school.
+- Students can view SSG announcements in their student pages.
+
+6. Event creation workflow
+- Officers with create_event permission create SSG events.
+- Event fields include:
+  - title
+  - description
+  - location
+  - event date
+  - start time
+  - end time
+  - late threshold
+- Newly created SSG events always start with status = pending.
+
+7. Event approval workflow
+- Officers with approve_event permission review pending events.
+- They can either:
+  - approve the event
+  - reject the event
+- Status flow:
+  - pending -> approved
+  - pending -> rejected
+
+8. Student-facing event visibility
+- Regular students only see approved SSG events.
+- Approved events appear in:
+  - student event listings
+  - upcoming events views
+  - related dashboard sections
+
+9. Reminder notification workflow
+- For approved SSG events happening within the next 24 hours, the system dispatches in-app reminders.
+- Reminder is sent once per event using the notification_sent flag.
+- Students receive the notification in the notification bell/panel.
+- Students can open the panel and mark notifications as read.
+
+10. Attendance workflow during event
+- During the event window, students can sign in.
+- Attendance status is computed using the event late threshold:
+  - present
+  - late
+- Students can sign out before the event ends.
+
+11. Attendance completion after event
+- After the event ends, students without attendance records are treated as absent.
+- Final attendance outcomes per student are:
+  - present
+  - late
+  - absent
+
+12. Monitoring and reporting
+- School IT/Admin monitors:
+  - role setup and slot usage
+  - officer assignments
+  - event pipeline
+  - announcement activity
+  - notification dispatch
+  - attendance outcomes
+- Reports should be filterable by school year, event, date range, and role where applicable.
+
+Suggested End-to-End Flow Summary
+- School IT creates SSG roles.
+- School IT assigns permissions to each role.
+- School IT assigns students to roles for the active school year.
+- Student officers log in and see permission-based SSG actions.
+- Officers post announcements or create events.
+- Approvers review pending events and approve/reject them.
+- Approved events become visible to students.
+- Event reminders are sent within 24 hours before the event.
+- Students receive reminders and manage unread notifications.
+- Students attend events and sign in/sign out.
+- Attendance is finalized as present, late, or absent.
+- School IT/Admin generates dashboards and reports.
+
+Graphs Needed
+
+1. Role Slot Utilization
+- Graph type: bar chart or progress bars
+- Purpose: show filled vs available slots per SSG role
+- Data source:
+  - ssg_roles
+  - ssg_user_roles
+
+2. Role-Permission Matrix
+- Graph type: heatmap or matrix table with check marks
+- Purpose: show which roles have which permissions
+- Data source:
+  - ssg_roles
+  - ssg_role_permissions
+  - ssg_permissions
+
+3. SSG Event Pipeline by Status
+- Graph type: stacked bar chart or donut chart
+- Purpose: show counts of pending, approved, and rejected events
+- Data source:
+  - ssg_events
+
+4. Event Approval Turnaround
+- Graph type: bar chart or line chart
+- Purpose: show average time from event creation to approval
+- Formula:
+  - approved_at - created_at
+- Data source:
+  - ssg_events
+
+5. Upcoming Approved Events Timeline
+- Graph type: timeline or calendar view
+- Purpose: show approved events scheduled in the next 7 to 30 days
+- Data source:
+  - ssg_events
+
+6. Attendance Breakdown per Event
+- Graph type: donut chart or stacked bar chart
+- Purpose: show present, late, and absent counts for each event
+- Data source:
+  - ssg_event_attendance
+  - ssg_events
+
+7. Attendance Trend Over Time
+- Graph type: line chart
+- Purpose: show attendance performance by week or month
+- Metrics:
+  - present count
+  - late count
+  - absent count
+- Data source:
+  - ssg_event_attendance
+  - ssg_events
+
+8. Notification Delivery and Read Status
+- Graph type: bar chart or funnel chart
+- Purpose: show total reminders sent, unread, and read
+- Data source:
+  - notifications
+  - ssg_events.notification_sent
+
+9. Announcement Activity Trend
+- Graph type: line chart or column chart
+- Purpose: show number of announcements posted per week or month
+- Data source:
+  - ssg_announcements
+
+10. Officer Activity Summary
+- Graph type: leaderboard bar chart
+- Purpose: rank officers by activity
+- Metrics:
+  - events created
+  - announcements posted
+  - approvals made
+- Data source:
+  - ssg_events
+  - ssg_announcements
+
+Reports Needed
+
+1. SSG Role Masterlist Report
+- Shows all SSG roles for the school
+- Includes max slots, assigned count, and open slots
+
+2. Role-Permission Matrix Report
+- Shows all roles and their mapped permissions
+
+3. Officer Assignment Report
+- Shows which student is assigned to which role
+- Must include school year
+
+4. SSG Event Pipeline Report
+- Shows all SSG events with status:
+  - pending
+  - approved
+  - rejected
+- Includes creator, approver, and timestamps
+
+5. Upcoming Approved Events Report
+- Shows approved events within a selected date range
+- Includes reminder status
+
+6. Event Attendance Summary Report
+- One row per event
+- Includes total present, late, absent, and attendance rate
+
+7. Event Attendance Detailed Report
+- One row per student per event
+- Includes sign-in time, sign-out time, and attendance status
+
+8. Late and Absent Students Report
+- Focuses on students who were late or absent
+- Useful for follow-up and compliance
+
+9. Announcement History Report
+- Shows all SSG announcements with title, author, and date posted
+
+10. Notification Dispatch Report
+- Shows reminder notifications sent per event
+- Includes read/unread counts if tracked in notifications
+
+11. Officer Activity Report
+- Shows activity by SSG officer
+- Suggested metrics:
+  - number of events created
+  - number of announcements posted
+  - number of approvals/rejections processed
+
+12. School-Year SSG Executive Summary
+- High-level management report for School IT/Admin
+- Suggested sections:
+  - total roles created
+  - total officers assigned
+  - total announcements posted
+  - total events created
+  - approved vs rejected events
+  - total reminders sent
+  - attendance performance summary
+
+Recommended Dashboard Sections
+- SSG Overview
+- Role Management Summary
+- Event Pipeline Summary
+- Attendance Analytics
+- Announcement Activity
+- Notification Status
+- Officer Productivity
+
+Recommended Filters for All SSG Dashboards and Reports
+- School year
+- Date range
+- Event status
+- Role
+- Specific event
+- Specific officer/student
+
+Current Data Sources in the Repo
+- ssg_permissions
+- ssg_roles
+- ssg_role_permissions
+- ssg_user_roles
+- ssg_events
+- ssg_event_attendance
+- ssg_announcements
+- notifications
+
+Important Implementation Notes
+- school_year should be a required or strongly visible filter in most SSG dashboards and reports.
+- Only approved SSG events should appear in student-facing event views.
+- Reminder notifications are currently based on approved events within the next 24 hours.
+- Announcement read analytics are not fully available unless a dedicated announcement view/read table is added.
+- If announcement engagement is needed, add a table such as announcement_views or announcement_reads.
+
+Minimum Dashboard KPIs
+- Total SSG roles
+- Total assigned officers
+- Open role slots
+- Total announcements this month
+- Total SSG events this month
+- Pending approvals
+- Approved events
+- Rejected events
+- Reminders sent
+- Average approval time
+- Attendance rate
+- Late rate
+- Absent rate

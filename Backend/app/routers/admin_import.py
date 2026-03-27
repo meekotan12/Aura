@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
 from zipfile import BadZipFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import select
@@ -38,6 +39,11 @@ from app.schemas.import_job import (
     ImportPreviewRow,
     RetryFailedRowsRequest,
 )
+from app.services.import_file_service import (
+    is_supported_import_file,
+    load_tabular_rows_from_bytes,
+    normalize_upload_to_csv_bytes,
+)
 from app.services.import_validation_service import (
     EXPECTED_HEADERS,
     HeaderValidationError,
@@ -46,9 +52,11 @@ from app.services.import_validation_service import (
     validate_and_transform_row,
     validate_headers,
 )
+from app.services.student_import_service import StudentImportService
 from app.workers.celery_app import celery_app
 
 router = APIRouter(prefix="/api/admin", tags=["admin-import"])
+logger = logging.getLogger(__name__)
 
 
 def get_current_admin_or_school_it(
@@ -102,7 +110,7 @@ def _validate_upload_basics(
     db: Session,
     settings,
 ) -> tuple[str, int]:
-    """Check the file name, type, and size before we read the Excel file."""
+    """Check the file name, type, and size before we read the import file."""
     filename = (file.filename or "").strip()
     if not filename:
         _append_import_audit_log(
@@ -113,7 +121,7 @@ def _validate_upload_basics(
         )
         db.commit()
         raise HTTPException(status_code=400, detail="File name is required")
-    if not filename.lower().endswith(".xlsx"):
+    if not is_supported_import_file(filename):
         _append_import_audit_log(
             db,
             current_user=current_user,
@@ -121,7 +129,7 @@ def _validate_upload_basics(
             details={"reason": "unsupported file extension", "filename": filename},
         )
         db.commit()
-        raise HTTPException(status_code=400, detail="Only .xlsx files are allowed")
+        raise HTTPException(status_code=400, detail="Only .csv and .xlsx files are allowed")
 
     file.file.seek(0, os.SEEK_END)
     size_bytes = file.file.tell()
@@ -160,6 +168,7 @@ def _validate_upload_basics(
 def _queue_import_job_from_file_bytes(
     *,
     db: Session,
+    background_tasks: BackgroundTasks,
     settings,
     current_user: User,
     filename: str,
@@ -167,18 +176,23 @@ def _queue_import_job_from_file_bytes(
     size_bytes: int,
     retried_from_job_id: str | None = None,
 ) -> ImportJobCreateResponse:
-    """Store an uploaded workbook first, then queue the background import job."""
+    """Normalize an uploaded import file first, then queue the background import job."""
     storage_dir = Path(settings.import_storage_dir) / "uploads"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    stored_file_path = storage_dir / f"{uuid.uuid4()}.xlsx"
-    stored_file_path.write_bytes(file_bytes)
+    _, normalized_file_bytes = normalize_upload_to_csv_bytes(
+        filename=filename,
+        file_bytes=file_bytes,
+    )
+    stored_file_path = storage_dir / f"{uuid.uuid4()}.csv"
+    stored_file_path.write_bytes(normalized_file_bytes)
     return _queue_import_job_from_stored_path(
         db=db,
+        background_tasks=background_tasks,
         settings=settings,
         current_user=current_user,
         filename=filename,
         stored_file_path=str(stored_file_path),
-        size_bytes=size_bytes,
+        size_bytes=size_bytes if size_bytes > 0 else len(normalized_file_bytes),
         retried_from_job_id=retried_from_job_id,
     )
 
@@ -186,6 +200,7 @@ def _queue_import_job_from_file_bytes(
 def _queue_import_job_from_stored_path(
     *,
     db: Session,
+    background_tasks: BackgroundTasks,
     settings,
     current_user: User,
     filename: str,
@@ -247,7 +262,15 @@ def _queue_import_job_from_stored_path(
     )
     db.commit()
     # Queue the background job after the database row is safely saved.
-    celery_app.send_task("app.workers.tasks.process_student_import_job", args=[job_id])
+    try:
+        celery_app.send_task("app.workers.tasks.process_student_import_job", args=[job_id])
+    except Exception:
+        logger.warning(
+            "Falling back to in-process import execution for job %s because Celery dispatch failed.",
+            job_id,
+            exc_info=True,
+        )
+        background_tasks.add_task(StudentImportService().process_job, job_id)
 
     return ImportJobCreateResponse(
         job_id=job_id,
@@ -523,7 +546,7 @@ def preview_import_students(
     current_user: User = Depends(get_current_admin_or_school_it),
     db: Session = Depends(get_db),
 ):
-    """Read the Excel file and show row errors before starting the real import."""
+    """Read the uploaded import file and show row errors before starting the real import."""
     settings = get_settings()
     filename, _ = _validate_upload_basics(
         file=file,
@@ -536,18 +559,15 @@ def preview_import_students(
     file_bytes = file.file.read()
 
     try:
-        workbook = load_workbook(filename=io.BytesIO(file_bytes), read_only=True, data_only=True)
-    except (InvalidFileException, BadZipFile, OSError) as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid Excel file: {exc}") from exc
-
-    try:
-        sheet = workbook.active
-        total_rows = max((sheet.max_row or 1) - 1, 0)
+        tabular_rows = load_tabular_rows_from_bytes(
+            filename=filename,
+            file_bytes=file_bytes,
+        )
+        total_rows = max(len(tabular_rows) - 1, 0)
         context = _build_validation_context(db, target_school_id)
 
-        row_iter = sheet.iter_rows(values_only=True)
         # The first row must match the template headers exactly.
-        header_row = next(row_iter, None)
+        header_row = tabular_rows[0] if tabular_rows else None
         if header_row is None:
             return ImportPreviewResponse(
                 filename=filename,
@@ -594,7 +614,7 @@ def preview_import_students(
         preview_rows: list[ImportPreviewRow] = []
         preview_rows_by_number: dict[int, ImportPreviewRow] = {}
 
-        for row_number, row_values in enumerate(row_iter, start=2):
+        for row_number, row_values in enumerate(tabular_rows[1:], start=2):
             transformed, row_errors, row_data = validate_and_transform_row(
                 row_number=row_number,
                 row_values=row_values,
@@ -680,12 +700,13 @@ def preview_import_students(
             preview_token=preview_token,
             rows=preview_rows,
         )
-    finally:
-        workbook.close()
+    except (InvalidFileException, BadZipFile, OSError, UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid import file: {exc}") from exc
 
 
 @router.post("/import-students", response_model=ImportJobCreateResponse)
 def import_students(
+    background_tasks: BackgroundTasks,
     preview_token: str | None = Form(default=None),
     current_user: User = Depends(get_current_admin_or_school_it),
     db: Session = Depends(get_db),
@@ -707,6 +728,7 @@ def import_students(
         size_bytes = manifest_path.stat().st_size if manifest_path.exists() else 0
         return _queue_import_job_from_stored_path(
             db=db,
+            background_tasks=background_tasks,
             settings=settings,
             current_user=current_user,
             filename=filename,
@@ -848,6 +870,7 @@ def remove_invalid_preview_rows(
 @router.post("/import-students/retry-failed/{job_id}", response_model=ImportJobCreateResponse)
 def retry_failed_rows(
     job_id: str,
+    background_tasks: BackgroundTasks,
     payload: RetryFailedRowsRequest | None = None,
     current_user: User = Depends(get_current_admin_or_school_it),
     db: Session = Depends(get_db),
@@ -893,6 +916,7 @@ def retry_failed_rows(
     settings = get_settings()
     return _queue_import_job_from_file_bytes(
         db=db,
+        background_tasks=background_tasks,
         settings=settings,
         current_user=current_user,
         filename=retry_filename,

@@ -4,13 +4,19 @@
 
 This guide explains how the frontend should handle login, optional password-change prompts, privileged face onboarding, and first-login credentials after the 2026-03-15 backend changes.
 
+## Route Prefix Note
+
+- canonical private backend routes in this guide now live under `/api/*`
+- private frontend callers should target `/api/*` only; the old unprefixed private aliases were removed
+- public auth entry routes such as `/login`, `/token`, `/auth/mfa/verify`, and `/auth/change-password` stay unchanged
+
 ## Main Backend Changes
 
 - new login response field: `password_change_recommended`
 - new route: `POST /auth/password-change-prompt/dismiss`
 - privileged users with `face_pending` tokens can now access `POST /auth/change-password`
 - new onboarding users are no longer forced through password change unless `must_change_password=true`
-- `POST /users/` now honors a supplied password or returns `generated_temporary_password`
+- `POST /api/users/` now honors a supplied password or returns `generated_temporary_password`
 - `POST /api/school/admin/create-school-it` now honors `school_it_password` or returns `generated_temporary_password`
 - protected backend routes now enforce server-side role guards before handler logic runs
 - protected backend routes also re-check inactive account and inactive school state on every authenticated request
@@ -78,10 +84,10 @@ Use this order after a successful `POST /login`, `POST /token`, or `POST /auth/m
 4. If the user chooses `Change password now`, call `POST /auth/change-password`.
 5. If the user chooses `Skip for now`, call `POST /auth/password-change-prompt/dismiss`.
 6. Continue to:
-   - `GET /auth/security/face-status`
-   - `POST /auth/security/face-liveness`
-   - `POST /auth/security/face-reference` if no reference exists
-   - `POST /auth/security/face-verify` to complete onboarding
+   - `GET /api/auth/security/face-status`
+   - `POST /api/auth/security/face-liveness`
+   - `POST /api/auth/security/face-reference` if no reference exists
+   - `POST /api/auth/security/face-verify` to complete onboarding
 7. After face verification succeeds, treat the returned token as the new active session token.
 
 ### Normal new user first login
@@ -114,19 +120,20 @@ Use this order after a successful `POST /login`, `POST /token`, or `POST /auth/m
 
 ### Privileged face onboarding
 
-- `GET /auth/security/face-status`
-- `POST /auth/security/face-liveness`
-- `POST /auth/security/face-reference`
-- `DELETE /auth/security/face-reference`
-- `POST /auth/security/face-verify`
+- `GET /api/auth/security/face-status`
+- `POST /api/auth/security/face-liveness`
+- `POST /api/auth/security/face-reference`
+- `DELETE /api/auth/security/face-reference`
+- `POST /api/auth/security/face-verify`
 
 ### Student face registration
 
-- `POST /face/register`
+- `POST /api/face/register`
+- successful responses may return `student_id: null` when the student profile exists but has no assigned external student ID yet
 
 Important:
-- `/face/register` is for student face registration
-- `/auth/security/face-*` is for admin and Campus Admin onboarding or privileged security flows
+- `/api/face/register` is for student face registration
+- `/api/auth/security/face-*` is for admin and Campus Admin onboarding or privileged security flows
 
 ## Server-Side Role Enforcement Notes
 
@@ -134,7 +141,7 @@ The frontend should still hide protected screens, but the backend now rejects pr
 
 Examples:
 
-- Campus Admin and admin routes such as `/users/*`, `/school-settings/*`, `/api/subscription/*`, and `/api/governance/announcements/monitor` require `admin` or `campus_admin` on the server
+- Campus Admin and admin routes such as `/api/users/*`, `/api/auth/security/*`, `/api/subscription/*`, and `/api/governance/announcements/monitor` require `admin` or `campus_admin` on the server
 - student face registration routes require the `student` role on the server
 - governance routes require either:
   - `admin`
@@ -191,7 +198,7 @@ Frontend rule:
 
 ## Create-Account Credential Contract
 
-### `POST /users/`
+### `POST /api/users/`
 
 - if the request includes `password`, that exact password becomes the initial login password
 - if the request does not include `password`, the backend generates one
@@ -203,6 +210,23 @@ Frontend rule:
 }
 ```
 
+### `POST /api/users/students/`
+
+- intended for the campus-admin single-student create flow
+- the backend derives `school_id` from the authenticated admin or campus admin
+- the request does not accept a password field
+- the backend always generates the initial password internally
+- the backend sends that generated password by welcome email before committing the new account
+- if the welcome email cannot be delivered, the backend returns an error and does not create the student account
+- the request body includes:
+  - `email`
+  - `first_name`
+  - optional `middle_name`
+  - `last_name`
+  - `department_id`
+  - `program_id`
+  - optional `year_level`, default `1`
+
 ### `POST /api/school/admin/create-school-it`
 
 - if the request includes `school_it_password`, that exact password becomes the initial login password
@@ -212,6 +236,7 @@ Frontend rule:
 Frontend rule:
 - only rely on `generated_temporary_password` when the caller did not supply the password
 - if the caller supplied the password, the frontend should use that submitted value as the real login password
+- for `POST /api/users/students/`, do not ask the campus admin to enter a password or expect the generated value back from the UI flow; the backend is responsible for generation and email delivery
 
 ## Suggested Frontend Implementation Notes
 
@@ -229,10 +254,11 @@ Frontend rule:
 2. Choose `Change password now` and confirm `POST /auth/change-password` succeeds while the token is still `face_pending`.
 3. Log in again as a new privileged user, choose `Skip for now`, and confirm `POST /auth/password-change-prompt/dismiss` succeeds.
 4. After skip, confirm the frontend continues to privileged face onboarding.
-5. Complete `POST /auth/security/face-verify` and confirm the app stores the final returned token.
+5. Complete `POST /api/auth/security/face-verify` and confirm the app stores the final returned token.
 6. Log in as a reset-password user and confirm the frontend forces the password-change screen without showing skip as the main path.
-7. Create a new user through `POST /users/` without a password and confirm the UI captures `generated_temporary_password`.
-8. Create a new user through `POST /users/` with a password and confirm the UI does not expect a generated password.
-9. Create a School IT account with and without `school_it_password` and confirm the credential handling matches the request.
-10. Deactivate a Campus Admin from the admin school-account route and confirm an already signed-in student is forced back to login after the next protected API call returns `This account's school is inactive.`
+7. Create a new user through `POST /api/users/` without a password and confirm the UI captures `generated_temporary_password`.
+8. Create a new user through `POST /api/users/` with a password and confirm the UI does not expect a generated password.
+9. Create a student through `POST /api/users/students/` and confirm no password field is shown in the UI, the account lands in the current school scope, and the welcome email is required for success.
+10. Create a School IT account with and without `school_it_password` and confirm the credential handling matches the request.
+11. Deactivate a Campus Admin from the admin school-account route and confirm an already signed-in student is forced back to login after the next protected API call returns `This account's school is inactive.`
 11. Reactivate that Campus Admin and confirm a normal student login succeeds again without frontend changes.

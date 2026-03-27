@@ -5,7 +5,7 @@ import { normalizeLogoUrl } from "../api/schoolSettingsApi";
 import DashboardHomeLayout from "../components/DashboardHomeLayout";
 
 // Import colorful icons
-import { FaCalendarAlt, FaCheckCircle, FaCamera } from "react-icons/fa";
+import { FaBell, FaCalendarAlt, FaCheckCircle, FaCamera } from "react-icons/fa";
 
 export const StudentDashboard: React.FC = () => {
   const { branding } = useUser();
@@ -30,6 +30,12 @@ export const StudentDashboard: React.FC = () => {
       description: "Verify your live face and location before attendance.",
       icon: <FaCamera style={{ color: "#162f65" }} />,
       link: "/student_event_checkin",
+    },
+    {
+      title: "Notifications",
+      description: "Review sign-in, sign-out, late attendance, and reminder alerts.",
+      icon: <FaBell style={{ color: "#b66a16" }} />,
+      link: "/student_notifications",
     },
   ];
 

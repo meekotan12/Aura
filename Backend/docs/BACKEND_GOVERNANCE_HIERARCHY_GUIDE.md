@@ -4,6 +4,12 @@
 
 This guide documents the governance hierarchy foundation for `Campus Admin (canonical database role: campus_admin, legacy alias: school_IT) -> SSG -> SG -> ORG` and explains how the backend enforces parent-child creation rules, single-SSG setup, officer-level permissions, and student scope safety.
 
+## Route Prefix Note
+
+- canonical private backend routes in this guide now live under `/api/*`
+- this especially applies to `/api/users/*`, `/api/events/*`, `/api/attendance/*`, `/api/programs/*`, `/api/departments/*`, `/api/auth/security/*`, and `/api/governance/*`
+- the deprecated unprefixed private paths were removed
+
 ## Placement
 
 - models:
@@ -11,7 +17,13 @@ This guide documents the governance hierarchy foundation for `Campus Admin (cano
 - schemas:
   - `Backend/app/schemas/governance_hierarchy.py`
 - services:
-  - `Backend/app/services/governance_hierarchy_service.py`
+  - `Backend/app/services/governance_hierarchy_service/`
+    - `__init__.py`
+    - `permissions.py`
+    - `unit_lifecycle.py`
+    - `membership.py`
+    - `engagement.py`
+    - `shared.py` (temporary internal compatibility layer)
 - router:
   - `Backend/app/routers/governance_hierarchy.py`
 - migration:
@@ -31,6 +43,7 @@ Current service-path note:
 - the active create flow now relies directly on `_ensure_can_create_child_unit()` for child-unit creation checks
 - governance route and feature checks now rely directly on `get_user_governance_unit_types()` and permission-based helpers
 - the older unused convenience wrappers `can_create_child_unit()` and `user_has_governance_unit_type()` were removed after confirming they were not part of the current runtime flow
+- new governance code should land in the package submodules above, not in `shared.py`, unless it is a deliberate compatibility extraction
 
 ## Campus Data Isolation
 
@@ -779,13 +792,14 @@ Attendance scope behavior:
 
 Student visibility behavior without `governance_context`:
 
-- normal student event lists are now filtered by the student's own academic scope
-- students can still see:
+- normal student event lists now expose all same-school `upcoming` events
+- once an event is no longer `upcoming`, student event lists fall back to the student's own academic scope
+- for active or historical events, students can still see:
   - school-wide events
   - department-wide events for their department
   - program-wide events for their program
-- students cannot see unrelated department or program events from the same campus
-- direct student access to out-of-scope event detail and verification routes now returns `404`
+- out-of-scope ongoing or completed events from the same campus remain hidden
+- direct student access to out-of-scope active event detail and verification routes still returns `404`
 
 Affected backend routes now support optional `governance_context`:
 
@@ -963,11 +977,9 @@ The service method `get_accessible_students()` applies these rules:
    - refresh and confirm the saved tags and notes still load
 11. Verify student event visibility:
    - log in as a normal student with a department and program
-   - confirm `/events/` only returns:
-     - school-wide events
-     - events for the student's own department
-     - events for the student's own program
-   - confirm a direct request to another department's event detail returns `404`
+   - confirm `/events/` returns all same-school upcoming events, including those outside the student's own department or program
+   - confirm out-of-scope ongoing or completed events are still hidden from `/events/`
+   - confirm a direct request to another department's active event detail returns `404`
 12. Verify SG and ORG deactivation:
    - delete an `SG` or `ORG` from the workspace UI
    - confirm the unit disappears from the active unit list

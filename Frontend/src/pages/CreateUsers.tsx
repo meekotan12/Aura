@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { NavbarAdmin } from "../components/NavbarAdmin";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
+import { fetchAcademicCatalog } from "../api/academicApi";
+import { createSchoolScopedUser, createStudentProfile } from "../api/userApi";
 import {} from "../css/CreateUsers.css";
 
 // Updated to match backend API structure
@@ -33,11 +35,6 @@ interface Program {
   department_ids: number[];
 }
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const USER_API = `${BASE_URL}/users`;
-const DEPARTMENT_API = `${BASE_URL}/departments/`;
-const PROGRAM_API = `${BASE_URL}/programs/`;
-
 // Match backend role values
 const availableRoles = [
   { value: "student", label: "Student" },
@@ -48,7 +45,6 @@ const availableRoles = [
 const yearLevels = [1, 2, 3, 4, 5];
 
 export const CreateUsers: React.FC = () => {
-  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<
@@ -84,76 +80,14 @@ export const CreateUsers: React.FC = () => {
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [programDropdownOpen, setProgramDropdownOpen] = useState(false);
 
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-      navigate("/login");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        navigate("/login");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
-
   // Fetch departments and programs on mount
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch departments with authentication
-        const deptResponse = await fetchWithAuth(DEPARTMENT_API);
-        const deptData = await deptResponse.json();
-        setDepartments(deptData);
-
-        // Fetch programs with authentication
-        const programResponse = await fetchWithAuth(PROGRAM_API);
-        const programData = await programResponse.json();
-        setPrograms(programData);
-
+        const { departments: nextDepartments, programs: nextPrograms } =
+          await fetchAcademicCatalog();
+        setDepartments(nextDepartments);
+        setPrograms(nextPrograms);
       } catch (error) {
         console.error("Error fetching data:", error);
         setError(
@@ -249,13 +183,7 @@ export const CreateUsers: React.FC = () => {
 
     try {
       // Step 1: Create the user
-      // Use canonical collection URL to avoid redirect-induced CORS failures.
-      const userResponse = await fetchWithAuth(`${USER_API}/`, {
-        method: "POST",
-        body: JSON.stringify(user),
-      });
-
-      const createdUser = await userResponse.json();
+      const createdUser = await createSchoolScopedUser(user);
       const userId = createdUser.id;
 
       // Flag to track if any operations failed
@@ -273,10 +201,7 @@ export const CreateUsers: React.FC = () => {
             year_level: yearLevel,
           };
 
-          await fetchWithAuth(`${USER_API}/admin/students/`, {
-            method: "POST",
-            body: JSON.stringify(studentProfileData),
-          });
+          await createStudentProfile(studentProfileData);
 
           // Handle face encoding with image if available
         } catch (err) {

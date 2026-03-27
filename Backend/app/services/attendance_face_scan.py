@@ -18,6 +18,7 @@ from app.services.attendance_status import finalize_completed_attendance_status
 from app.services.event_attendance_service import get_event_participant_student_ids
 from app.services.event_time_status import get_attendance_decision, get_event_status, get_sign_out_decision
 from app.services.face_recognition import FaceCandidate, FaceMatchResult, LivenessResult
+from app.services.notification_center_service import send_attendance_notification
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ def resolve_public_attendance_phase(event: EventModel) -> str | None:
         early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
         late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
         sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+        sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
         sign_out_override_until=getattr(event, "sign_out_override_until", None),
         present_until_override_at=getattr(event, "present_until_override_at", None),
         late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -235,6 +237,7 @@ def persist_public_attendance_scan(
             early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
             late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
             sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+            sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
             sign_out_override_until=getattr(event, "sign_out_override_until", None),
             present_until_override_at=getattr(event, "present_until_override_at", None),
             late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -265,6 +268,35 @@ def persist_public_attendance_scan(
             liveness_score=float(liveness.score) if liveness is not None else None,
         )
         db.add(attendance)
+        db.flush()
+        if student.user is not None:
+            notification_category = (
+                "late_attendance"
+                if attendance_decision.attendance_status == "late"
+                else "attendance_sign_in"
+            )
+            send_attendance_notification(
+                db,
+                user=student.user,
+                school_id=event.school_id,
+                category=notification_category,
+                subject=(
+                    f"Late attendance recorded for {event.name}"
+                    if notification_category == "late_attendance"
+                    else f"Sign-in recorded for {event.name}"
+                ),
+                message=(
+                    f"Your sign-in for {event.name} was recorded and marked {attendance_decision.attendance_status}."
+                    " Complete sign-out during the allowed window to validate attendance."
+                ),
+                metadata_json={
+                    "event_id": event.id,
+                    "attendance_id": attendance.id,
+                    "action": "sign_in",
+                    "source": "public_attendance",
+                    "display_status": attendance_decision.attendance_status,
+                },
+            )
         db.commit()
         db.refresh(attendance)
         return PublicAttendancePersistenceResult(
@@ -301,6 +333,7 @@ def persist_public_attendance_scan(
         early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
         late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
         sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+        sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
         sign_out_override_until=getattr(event, "sign_out_override_until", None),
         present_until_override_at=getattr(event, "present_until_override_at", None),
         late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -320,6 +353,26 @@ def persist_public_attendance_scan(
     )
     active_attendance.status = finalized_status
     active_attendance.notes = finalized_note
+    if student.user is not None:
+        send_attendance_notification(
+            db,
+            user=student.user,
+            school_id=event.school_id,
+            category="attendance_sign_out",
+            subject=f"Sign-out recorded for {event.name}",
+            message=(
+                f"Your sign-out for {event.name} was recorded successfully."
+                if finalized_status in {"present", "late"}
+                else f"Your sign-out for {event.name} was recorded, but the attendance is not valid."
+            ),
+            metadata_json={
+                "event_id": event.id,
+                "attendance_id": active_attendance.id,
+                "action": "sign_out",
+                "source": "public_attendance",
+                "display_status": finalized_status,
+            },
+        )
     db.commit()
     db.refresh(active_attendance)
 

@@ -5,6 +5,7 @@ import {
   GovernanceAccessResponse,
   GovernancePermissionCode,
 } from "../api/governanceHierarchyApi";
+import { getStoredUserId } from "../lib/auth/storedUser";
 
 type UseGovernanceAccessOptions = {
   enabled?: boolean;
@@ -16,17 +17,6 @@ let cachedAccess: GovernanceAccessResponse | null = null;
 let inflightRequest: Promise<GovernanceAccessResponse> | null = null;
 const GOVERNANCE_ACCESS_STORAGE_KEY = "valid8.governance.access";
 const GOVERNANCE_ACCESS_UPDATED_EVENT = "valid8:governance-access-updated";
-
-const getStoredUserId = (): number | null => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { id?: number };
-    return typeof parsed.id === "number" ? parsed.id : null;
-  } catch {
-    return null;
-  }
-};
 
 const parseStoredGovernanceAccess = (): GovernanceAccessResponse | null => {
   try {

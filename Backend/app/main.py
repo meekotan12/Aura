@@ -3,11 +3,16 @@ Where to use: Use this file when running the API server because it is the main a
 Role: Application entry layer. It wires the app, middleware, static files, and routes together.
 """
 
-from fastapi import FastAPI
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
+from app.services.email_service import validate_email_delivery_on_startup
 from app.routers import (
     users,
     events,
@@ -28,9 +33,21 @@ from app.routers import (
     public_attendance,
     health,
 )
-from pathlib import Path
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        validate_email_delivery_on_startup()
+    except Exception:
+        logger.exception("Email delivery startup validation failed.")
+        raise
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 settings = get_settings()
 
 # CORS setup
@@ -42,23 +59,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def include_api_router(router: APIRouter) -> None:
+    app.include_router(router, prefix="/api")
+
+
 # Include routers
-app.include_router(users.router)
-app.include_router(events.router)
-app.include_router(programs.router)
-app.include_router(departments.router)
 app.include_router(auth.router)
-app.include_router(attendance.router)
+include_api_router(users.router)
+include_api_router(events.router)
+include_api_router(programs.router)
+include_api_router(departments.router)
+include_api_router(attendance.router)
 app.include_router(school_settings.router)
 app.include_router(admin_import.router)
 app.include_router(school.router)
 app.include_router(audit_logs.router)
 app.include_router(notifications.router)
-app.include_router(security_center.router)
+include_api_router(security_center.router)
 app.include_router(subscription.router)
 app.include_router(governance.router)
 app.include_router(governance_hierarchy.router)
-app.include_router(face_recognition.router)
+include_api_router(face_recognition.router)
 app.include_router(public_attendance.router)
 app.include_router(health.router)
 
@@ -70,18 +92,20 @@ app.mount(settings.school_logo_public_prefix, StaticFiles(directory=str(logo_sto
 async def root():
     return {
         "message": "Welcome to the Student Attendance System API",
+        "private_api_prefix": "/api",
         "endpoints": {
-            "users": "/users",
-            "events": "/events",
-            "programs": "/programs",
-            "departments": "/departments",
+            "users": "/api/users",
+            "events": "/api/events",
+            "programs": "/api/programs",
+            "departments": "/api/departments",
+            "attendance": "/api/attendance",
             "school_settings": "/school-settings",
             "admin_import": "/api/admin/import-students",
             "school_branding": "/api/school/me",
             "audit_logs": "/api/audit-logs",
             "notifications": "/api/notifications",
-            "security": "/auth/security",
-            "face": "/face",
+            "security": "/api/auth/security",
+            "face": "/api/face",
             "public_attendance": "/public-attendance",
             "health": "/health",
             "subscription": "/api/subscription/me",

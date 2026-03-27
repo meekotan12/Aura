@@ -4,6 +4,7 @@ import DashboardHomeLayout from "../components/DashboardHomeLayout";
 
 // Import colorful icons
 import {
+  FaKey,
   FaSchool,
   FaUserShield,
 } from "react-icons/fa";
@@ -21,6 +22,12 @@ export const AdminDashboard: React.FC = () => {
       description: "Manage live face enrollment and anti-spoof verification for privileged accounts.",
       icon: <FaUserShield style={{ color: "#162f65" }} />,
       link: "/admin_face_verification",
+    },
+    {
+      title: "Password Reset Requests",
+      description: "Review reset requests for student and campus admin accounts that need platform approval.",
+      icon: <FaKey style={{ color: "#d97706" }} />,
+      link: "/admin_password_resets",
     },
   ];
 

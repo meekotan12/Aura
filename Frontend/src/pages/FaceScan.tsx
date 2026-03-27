@@ -1,17 +1,20 @@
 // FaceScan.tsx
 import React, { useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import {
+  registerFaceFromImage,
+  submitFaceAttendanceScan,
+  uploadFaceRegistration,
+  verifyFaceFromImage,
+} from "../api/faceScanApi";
 import { NavbarStudent } from "../components/NavbarStudent";
 import { NavbarStudentSSG } from "../components/NavbarStudentSSG";
 import { NavbarSSG } from "../components/NavbarSSG";
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 interface RecordsProps {
   role: string;
 }
 
 export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
-  const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -26,62 +29,6 @@ export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
     "register" | "verify" | "attendance"
   >("register");
   const [eventId, setEventId] = useState<number>(1); // You might want to fetch this from a dropdown
-
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-      navigate("/login");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        navigate("/login");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
 
   const startCamera = useCallback(async () => {
     try {
@@ -153,12 +100,7 @@ export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
 
     setLoading(true);
     try {
-      const response = await fetchWithAuth(`${BASE_URL}/face/register`, {
-        method: "POST",
-        body: JSON.stringify({ image_base64: imageBase64 }),
-      });
-
-      const result = await response.json();
+      const result = await registerFaceFromImage(imageBase64);
       setMessage(
         `Face registered successfully for student ${result.student_id}`
       );
@@ -179,29 +121,7 @@ export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
 
     setLoading(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      // Create custom fetch for file upload
-      const token = localStorage.getItem("authToken");
-      if (!token) {
-        navigate("/login");
-        return;
-      }
-
-      const response = await fetch(`${BASE_URL}/face/register-upload`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
+      const result = await uploadFaceRegistration(file);
       setMessage(
         `Face registered successfully for student ${result.student_id}`
       );
@@ -230,12 +150,7 @@ export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
 
     setLoading(true);
     try {
-      const response = await fetchWithAuth(`${BASE_URL}/face/verify`, {
-        method: "POST",
-        body: JSON.stringify({ image_base64: imageBase64 }),
-      });
-
-      const result = await response.json();
+      const result = await verifyFaceFromImage(imageBase64);
       if (result.match_found) {
         setMessage(
           `Match found: ${result.student_name} (ID: ${result.student_id})`
@@ -286,20 +201,13 @@ export const FaceScan: React.FC<RecordsProps> = ({ role }) => {
         console.warn("Geolocation lookup failed:", locationError);
       }
 
-      // FIXED: Use the correct endpoint path with '/face/' prefix
-      const response = await fetchWithAuth(
-        `${BASE_URL}/face/face-scan-with-recognition`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            event_id: eventId,
-            image_base64: imageBase64,
-            ...locationPayload,
-          }),
-        }
-      );
-
-      const result = await response.json();
+      const result = await submitFaceAttendanceScan({
+        eventId,
+        imageBase64,
+        latitude: locationPayload.latitude,
+        longitude: locationPayload.longitude,
+        accuracyM: locationPayload.accuracy_m,
+      });
       if (result.action === "time_in") {
         setMessage(
           `Check-in recorded for ${result.student_name} (${result.student_id})${

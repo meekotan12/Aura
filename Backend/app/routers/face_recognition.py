@@ -35,7 +35,12 @@ from app.services.attendance_face_scan import (
     get_registered_face_candidates_for_school,
     student_display_name,
 )
-from app.services.face_recognition import FaceRecognitionService
+from app.services.event_attendance_service import get_event_participant_student_ids
+from app.services.face_recognition import (
+    FaceRecognitionService,
+    LivenessResult,
+    is_face_scan_bypass_enabled_for_user,
+)
 from app.services.attendance_status import (
     finalize_completed_attendance_status,
 )
@@ -43,6 +48,7 @@ from app.services.event_geolocation import (
     find_attendance_geolocation_travel_risk,
     verify_event_geolocation_for_attendance,
 )
+from app.services.notification_center_service import send_attendance_notification
 from app.services.event_time_status import get_attendance_decision, get_sign_out_decision
 from app.services.event_workflow_status import sync_event_workflow_status
 from app.services import governance_hierarchy_service
@@ -95,6 +101,7 @@ def _attendance_time_window_detail(event: EventModel, *, action: str = "check_in
             early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
             late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
             sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+            sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
             sign_out_override_until=getattr(event, "sign_out_override_until", None),
             present_until_override_at=getattr(event, "present_until_override_at", None),
             late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -106,6 +113,7 @@ def _attendance_time_window_detail(event: EventModel, *, action: str = "check_in
             early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
             late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
             sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+            sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
             sign_out_override_until=getattr(event, "sign_out_override_until", None),
             present_until_override_at=getattr(event, "present_until_override_at", None),
             late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -275,9 +283,15 @@ def record_attendance_from_face_scan(
     current_student_profile = (
         _require_student_profile(current_user) if actor_is_student_self_scan else None
     )
+    bypass_face_scan = (
+        actor_is_student_self_scan
+        and current_student_profile is not None
+        and is_face_scan_bypass_enabled_for_user(current_user)
+    )
     if (
         actor_is_student_self_scan
         and current_student_profile is not None
+        and not bypass_face_scan
         and not bool(current_student_profile.is_face_registered)
     ):
         raise HTTPException(
@@ -285,41 +299,69 @@ def record_attendance_from_face_scan(
             detail="Register your student face before signing in to an event.",
         )
 
-    image_bytes = face_service.decode_base64_image(payload.image_base64)
-    encoding, liveness = face_service.extract_encoding_from_bytes(
-        image_bytes,
-        require_single_face=True,
-        enforce_liveness=True,
-    )
+    if bypass_face_scan:
+        participant_ids = set(get_event_participant_student_ids(db, event))
+        if current_student_profile.id not in participant_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The signed-in student is outside this event scope.",
+            )
 
-    candidates = get_registered_face_candidates_for_event(db, event)
-    if not candidates:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No registered student faces found in this event scope.",
+        student = current_student_profile
+        liveness = LivenessResult(
+            label="Bypassed",
+            score=1.0,
+            reason="face_scan_bypass",
+        )
+        match_distance = 0.0
+        match_confidence = 1.0
+        match_threshold = float(payload.threshold or face_service.settings.face_match_threshold)
+    else:
+        if not payload.image_base64:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A live camera frame is required for face attendance scans.",
+            )
+
+        image_bytes = face_service.decode_base64_image(payload.image_base64)
+        encoding, liveness = face_service.extract_encoding_from_bytes(
+            image_bytes,
+            require_single_face=True,
+            enforce_liveness=True,
         )
 
-    match = face_service.find_best_match(
-        encoding,
-        [scoped_candidate.candidate for scoped_candidate in candidates],
-        threshold=payload.threshold,
-    )
-    if not match.matched or match.candidate is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No matching student found.",
-        )
+        candidates = get_registered_face_candidates_for_event(db, event)
+        if not candidates:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No registered student faces found in this event scope.",
+            )
 
-    student_lookup = {
-        scoped_candidate.candidate.identifier: scoped_candidate.student
-        for scoped_candidate in candidates
-    }
-    student = student_lookup.get(match.candidate.identifier)
-    if student is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Matched student could not be resolved.",
+        match = face_service.find_best_match(
+            encoding,
+            [scoped_candidate.candidate for scoped_candidate in candidates],
+            threshold=payload.threshold,
         )
+        if not match.matched or match.candidate is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No matching student found.",
+            )
+
+        student_lookup = {
+            scoped_candidate.candidate.identifier: scoped_candidate.student
+            for scoped_candidate in candidates
+        }
+        student = student_lookup.get(match.candidate.identifier)
+        if student is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Matched student could not be resolved.",
+            )
+
+        match_distance = round(match.distance, 6)
+        match_confidence = round(match.confidence, 6)
+        match_threshold = round(match.threshold, 6)
 
     if (
         actor_is_student_self_scan
@@ -384,6 +426,7 @@ def record_attendance_from_face_scan(
             early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
             late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
             sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+            sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
             sign_out_override_until=getattr(event, "sign_out_override_until", None),
             present_until_override_at=getattr(event, "present_until_override_at", None),
             late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -406,6 +449,25 @@ def record_attendance_from_face_scan(
         )
         active_attendance.status = finalized_status
         active_attendance.notes = finalized_note
+        if student.user is not None:
+            send_attendance_notification(
+                db,
+                user=student.user,
+                school_id=event.school_id,
+                category="attendance_sign_out",
+                subject=f"Sign-out recorded for {event.name}",
+                message=(
+                    f"Your sign-out for {event.name} was recorded successfully."
+                    if finalized_status in {"present", "late"}
+                    else f"Your sign-out for {event.name} was recorded, but the attendance is not valid."
+                ),
+                metadata_json={
+                    "event_id": event.id,
+                    "attendance_id": active_attendance.id,
+                    "action": "sign_out",
+                    "display_status": finalized_status,
+                },
+            )
         db.commit()
         db.refresh(active_attendance)
         duration_minutes = int(
@@ -419,9 +481,9 @@ def record_attendance_from_face_scan(
             student_id=student.student_id,
             student_name=student_display_name(student),
             attendance_id=active_attendance.id,
-            distance=round(match.distance, 6),
-            confidence=round(match.confidence, 6),
-            threshold=round(match.threshold, 6),
+            distance=match_distance,
+            confidence=match_confidence,
+            threshold=match_threshold,
             liveness=liveness.to_dict(),
             geo=geo_response,
             time_out=active_attendance.time_out,
@@ -456,6 +518,7 @@ def record_attendance_from_face_scan(
         early_check_in_minutes=getattr(event, "early_check_in_minutes", 0),
         late_threshold_minutes=getattr(event, "late_threshold_minutes", 0),
         sign_out_grace_minutes=getattr(event, "sign_out_grace_minutes", 0),
+        sign_out_open_delay_minutes=getattr(event, "sign_out_open_delay_minutes", 0),
         sign_out_override_until=getattr(event, "sign_out_override_until", None),
         present_until_override_at=getattr(event, "present_until_override_at", None),
         late_until_override_at=getattr(event, "late_until_override_at", None),
@@ -489,6 +552,35 @@ def record_attendance_from_face_scan(
         liveness_score=float(liveness.score),
     )
     db.add(attendance)
+    db.flush()
+    if student.user is not None:
+        notification_category = (
+            "late_attendance"
+            if attendance_decision.attendance_status == "late"
+            else "attendance_sign_in"
+        )
+        notification_subject = (
+            f"Late attendance recorded for {event.name}"
+            if notification_category == "late_attendance"
+            else f"Sign-in recorded for {event.name}"
+        )
+        send_attendance_notification(
+            db,
+            user=student.user,
+            school_id=event.school_id,
+            category=notification_category,
+            subject=notification_subject,
+            message=(
+                f"Your sign-in for {event.name} was recorded and marked {attendance_decision.attendance_status}."
+                " Complete sign-out during the allowed window to validate attendance."
+            ),
+            metadata_json={
+                "event_id": event.id,
+                "attendance_id": attendance.id,
+                "action": "sign_in",
+                "display_status": attendance_decision.attendance_status,
+            },
+        )
     db.commit()
     db.refresh(attendance)
 
@@ -505,9 +597,9 @@ def record_attendance_from_face_scan(
         student_id=student.student_id,
         student_name=student_display_name(student),
         attendance_id=attendance.id,
-        distance=round(match.distance, 6),
-        confidence=round(match.confidence, 6),
-        threshold=round(match.threshold, 6),
+        distance=match_distance,
+        confidence=match_confidence,
+        threshold=match_threshold,
         liveness=liveness.to_dict(),
         geo=geo_response,
         time_in=attendance.time_in,

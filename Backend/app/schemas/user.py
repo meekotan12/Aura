@@ -64,6 +64,23 @@ class UserCreate(UserBase):
     roles: list[RoleEnum]
 
 
+class StudentAccountCreate(UserBase):
+    department_id: int = Field(
+        ...,
+        description="ID of the department the student belongs to",
+    )
+    program_id: int = Field(
+        ...,
+        description="ID of the academic program the student is enrolled in",
+    )
+    year_level: int = Field(
+        1,
+        ge=1,
+        le=5,
+        description="Year level defaults to 1 when omitted",
+    )
+
+
 class UserUpdate(BaseModel):
     """Schema for partially updating user information."""
 
@@ -156,6 +173,7 @@ class User(UserBase):
     id: int
     school_id: int | None = None
     is_active: bool
+    face_scan_bypass_enabled: bool = False
     created_at: datetime
     roles: list[UserRoleResponse] = Field(default_factory=list)
 

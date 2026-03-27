@@ -4,6 +4,7 @@ import {
   FaHome,
   FaCalendarAlt,
   FaCamera,
+  FaBell,
   FaClipboardCheck,
   FaBars,
   FaTimes,
@@ -118,6 +119,19 @@ export const NavbarStudent = () => {
               >
                 <FaCamera className="nav-icon" />
                 <span className="nav-text">Event Sign In</span>
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/student_notifications"
+                className={({ isActive }) =>
+                  isActive ? "student-nav-link active" : "student-nav-link"
+                }
+                onClick={() => setSidebarOpen(false)}
+                title="Notifications"
+              >
+                <FaBell className="nav-icon" />
+                <span className="nav-text">Notifications</span>
               </NavLink>
             </li>
             <li>

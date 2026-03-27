@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List
 from zipfile import BadZipFile
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.models.associations import program_department_association
 from app.models.school import SchoolAuditLog
 from app.models.user import User
 from app.repositories.import_repository import ImportRepository
+from app.services.import_file_service import load_tabular_rows_from_bytes
 from app.services.import_validation_service import (
     EXPECTED_HEADERS,
     HeaderValidationError,
@@ -47,12 +48,14 @@ class StudentImportService:
         self.settings = get_settings()
 
     def process_job(self, job_id: str) -> None:
+        target_school_id: int | None = None
         with SessionLocal() as db:
             repo = ImportRepository(db)
             job = repo.get_job(job_id)
             if not job:
                 logger.error("Import job not found", extra={"job_id": job_id})
                 return
+            target_school_id = int(job.target_school_id)
 
             repo.mark_processing(job_id)
             db.commit()
@@ -63,7 +66,9 @@ class StudentImportService:
         try:
             lock_db = SessionLocal()
             lock_repo = ImportRepository(lock_db)
-            lock_repo.lock_import_processing()
+            if target_school_id is None:
+                raise RuntimeError("Import job school is missing")
+            lock_repo.lock_import_processing(target_school_id)
             lock_db.commit()
 
             failed_report_path = self._process_streaming(job_id)
@@ -110,7 +115,8 @@ class StudentImportService:
             if lock_db is not None:
                 try:
                     lock_repo = ImportRepository(lock_db)
-                    lock_repo.unlock_import_processing()
+                    if target_school_id is not None:
+                        lock_repo.unlock_import_processing(target_school_id)
                     lock_db.commit()
                 finally:
                     lock_db.close()
@@ -139,6 +145,7 @@ class StudentImportService:
             )
 
         validation_context = self._build_validation_context(target_school_id)
+        shared_password_hash = self._build_shared_import_password_hash()
 
         failed_report_dir = Path(settings.import_storage_dir) / "reports"
         failed_report_dir.mkdir(parents=True, exist_ok=True)
@@ -160,21 +167,22 @@ class StudentImportService:
             student_role_id = repo.get_student_role_id()
             db.commit()
 
-        workbook = None
         try:
-            workbook = load_workbook(filename=file_path, read_only=True, data_only=True)
-            sheet = workbook.active
+            tabular_rows = load_tabular_rows_from_bytes(
+                filename=Path(file_path).name,
+                file_bytes=Path(file_path).read_bytes(),
+            )
+            total_rows = max(len(tabular_rows) - 1, 0)
 
-            estimated_total = max((sheet.max_row or 1) - 1, 0)
-            total_rows = estimated_total
+            if not tabular_rows:
+                raise HeaderValidationError("Uploaded file is empty")
 
-            row_iter = sheet.iter_rows(values_only=True)
-            header_row = next(row_iter, None)
+            header_row = tabular_rows[0]
             if header_row is None:
-                raise HeaderValidationError("Uploaded Excel file is empty")
+                raise HeaderValidationError("Uploaded import file is empty")
             validate_headers(header_row)
 
-            for row_number, row_values in enumerate(row_iter, start=2):
+            for row_number, row_values in enumerate(tabular_rows[1:], start=2):
                 transformed, row_errors, raw_row_data = validate_and_transform_row(
                     row_number=row_number,
                     row_values=row_values,
@@ -193,9 +201,6 @@ class StudentImportService:
                         }
                     )
                 else:
-                    temporary_password = generate_secure_password()
-                    transformed["temporary_password"] = temporary_password
-                    transformed["password_hash"] = hash_password_bcrypt(temporary_password)
                     transformed["raw_row_data"] = raw_row_data
                     row_buffer.append(transformed)
 
@@ -204,6 +209,7 @@ class StudentImportService:
                         job_id=job_id,
                         row_buffer=row_buffer,
                         student_role_id=student_role_id,
+                        shared_password_hash=shared_password_hash,
                     )
                     success_count += batch_success_count
                     failed_count += batch_failed_count
@@ -238,6 +244,7 @@ class StudentImportService:
                     job_id=job_id,
                     row_buffer=row_buffer,
                     student_role_id=student_role_id,
+                    shared_password_hash=shared_password_hash,
                 )
                 success_count += batch_success_count
                 failed_count += batch_failed_count
@@ -273,9 +280,6 @@ class StudentImportService:
 
         except Exception:
             raise
-        finally:
-            if workbook is not None:
-                workbook.close()
 
     def _process_preview_manifest(
         self,
@@ -308,6 +312,7 @@ class StudentImportService:
 
         row_buffer: List[dict] = []
         error_buffer: List[dict] = []
+        shared_password_hash = self._build_shared_import_password_hash()
 
         processed_rows = 0
         success_count = 0
@@ -323,9 +328,6 @@ class StudentImportService:
             processed_row = dict(approved_row)
             raw_row_data = processed_row.get("raw_row_data") or {}
 
-            temporary_password = generate_secure_password()
-            processed_row["temporary_password"] = temporary_password
-            processed_row["password_hash"] = hash_password_bcrypt(temporary_password)
             processed_row["raw_row_data"] = raw_row_data
             row_buffer.append(processed_row)
             processed_rows += 1
@@ -335,6 +337,7 @@ class StudentImportService:
                     job_id=job_id,
                     row_buffer=row_buffer,
                     student_role_id=student_role_id,
+                    shared_password_hash=shared_password_hash,
                     trust_preview=True,
                 )
                 success_count += batch_success_count
@@ -370,6 +373,7 @@ class StudentImportService:
                 job_id=job_id,
                 row_buffer=row_buffer,
                 student_role_id=student_role_id,
+                shared_password_hash=shared_password_hash,
                 trust_preview=True,
             )
             success_count += batch_success_count
@@ -405,7 +409,7 @@ class StudentImportService:
         return None
 
     def _safe_error_message(self, exc: Exception) -> str:
-        if isinstance(exc, (HeaderValidationError, FileNotFoundError, InvalidFileException, BadZipFile)):
+        if isinstance(exc, (HeaderValidationError, FileNotFoundError, InvalidFileException, BadZipFile, UnicodeDecodeError)):
             return str(exc)
         return "Import processing failed. Please validate the file and try again."
 
@@ -441,6 +445,7 @@ class StudentImportService:
         job_id: str,
         row_buffer: List[dict],
         student_role_id: int,
+        shared_password_hash: str,
         trust_preview: bool = False,
     ) -> tuple[int, int, List[dict]]:
         with SessionLocal() as db:
@@ -448,23 +453,64 @@ class StudentImportService:
             success_rows, batch_errors = repo.bulk_insert_students(
                 row_buffer,
                 student_role_id,
+                shared_password_hash=shared_password_hash,
                 trust_preview=trust_preview,
             )
             db.commit()
 
         for row in success_rows:
-            celery_app.send_task(
-                "app.workers.tasks.send_student_welcome_email",
-                args=[
-                    job_id,
-                    row["user_id"],
-                    row["email"],
-                    row["temporary_password"],
-                    row.get("first_name"),
-                ],
+            self._queue_account_ready_email(
+                job_id=job_id,
+                user_id=row["user_id"],
+                email=row["email"],
+                first_name=row.get("first_name"),
             )
 
         return len(success_rows), len(batch_errors), batch_errors
+
+    def _queue_account_ready_email(
+        self,
+        *,
+        job_id: str,
+        user_id: int,
+        email: str,
+        first_name: str | None = None,
+    ) -> None:
+        try:
+            celery_app.send_task(
+                "app.workers.tasks.send_student_import_onboarding_email",
+                args=[
+                    job_id,
+                    user_id,
+                    email,
+                    first_name,
+                ],
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "Deferring onboarding email delivery for import job %s and user %s because task publishing failed.",
+                job_id,
+                user_id,
+                exc_info=True,
+            )
+
+        with SessionLocal() as db:
+            repo = ImportRepository(db)
+            repo.log_email_delivery(
+                job_id=job_id,
+                user_id=user_id,
+                email=email,
+                status="deferred",
+                error_message=str(exc),
+                retry_count=0,
+            )
+            db.commit()
+
+    def _build_shared_import_password_hash(self) -> str:
+        # Imported accounts start in a password-pending state so the job avoids one bcrypt hash per user.
+        pending_password = generate_secure_password(min_length=20, max_length=24)
+        return hash_password_bcrypt(pending_password)
 
     def _build_validation_context(self, target_school_id: int) -> ValidationContext:
         with SessionLocal() as db:

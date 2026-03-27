@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import {
+  createAcademicDepartment,
+  createAcademicProgram,
+  deleteAcademicDepartment,
+  deleteAcademicProgram,
+  fetchAcademicCatalog,
+  fetchAcademicDepartments,
+  updateAcademicDepartment,
+  updateAcademicProgram,
+} from "../api/academicApi";
 import NavbarAdmin from "../components/NavbarAdmin";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 
@@ -19,7 +28,6 @@ interface Program {
 }
 
 const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" }) => {
-  const navigate = useNavigate();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
   const [activeTab, setActiveTab] = useState<"departments" | "programs">(
@@ -37,64 +45,6 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
   const [selectedDeptIds, setSelectedDeptIds] = useState<number[]>([]);
   const [editingProgId, setEditingProgId] = useState<number | null>(null);
 
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-      navigate("/login");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        navigate("/login");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
-
   // Fetch data
   useEffect(() => {
     const fetchData = async () => {
@@ -102,18 +52,11 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
       setError(null);
       try {
         if (activeTab === "departments") {
-          const response = await fetchWithAuth(`${BASE_URL}/departments/`);
-          const data = await response.json();
+          const data = await fetchAcademicDepartments();
           setDepartments(data);
         } else {
-          const [deptsResponse, progsResponse] = await Promise.all([
-            fetchWithAuth(`${BASE_URL}/departments/`),
-            fetchWithAuth(`${BASE_URL}/programs/`),
-          ]);
-          const [deptsData, progsData] = await Promise.all([
-            deptsResponse.json(),
-            progsResponse.json(),
-          ]);
+          const { departments: deptsData, programs: progsData } =
+            await fetchAcademicCatalog();
           setDepartments(deptsData);
           setPrograms(progsData);
         }
@@ -135,19 +78,9 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
     setError(null);
 
     try {
-      const url = editingDeptId
-        ? `${BASE_URL}/departments/${editingDeptId}`
-        : `${BASE_URL}/departments/`;
-
-      const method = editingDeptId ? "PATCH" : "POST";
-      const body = JSON.stringify({ name: deptName });
-
-      const response = await fetchWithAuth(url, {
-        method,
-        body,
-      });
-
-      const data = await response.json();
+      const data = editingDeptId
+        ? await updateAcademicDepartment(editingDeptId, { name: deptName })
+        : await createAcademicDepartment({ name: deptName });
 
       if (editingDeptId) {
         setDepartments(
@@ -176,9 +109,7 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
       return;
 
     try {
-      await fetchWithAuth(`${BASE_URL}/departments/${id}`, {
-        method: "DELETE",
-      });
+      await deleteAcademicDepartment(id);
       setDepartments(departments.filter((dept) => dept.id !== id));
     } catch (err) {
       setError(
@@ -193,22 +124,13 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
     setError(null);
 
     try {
-      const url = editingProgId
-        ? `${BASE_URL}/programs/${editingProgId}`
-        : `${BASE_URL}/programs/`;
-
-      const method = editingProgId ? "PATCH" : "POST";
-      const body = JSON.stringify({
+      const payload = {
         name: progName,
         department_ids: selectedDeptIds,
-      });
-
-      const response = await fetchWithAuth(url, {
-        method,
-        body,
-      });
-
-      const data = await response.json();
+      };
+      const data = editingProgId
+        ? await updateAcademicProgram(editingProgId, payload)
+        : await createAcademicProgram(payload);
 
       if (editingProgId) {
         setPrograms(
@@ -237,9 +159,7 @@ const AcademicManagement: React.FC<AcademicManagementProps> = ({ role = "admin" 
       return;
 
     try {
-      await fetchWithAuth(`${BASE_URL}/programs/${id}`, {
-        method: "DELETE",
-      });
+      await deleteAcademicProgram(id);
       setPrograms(programs.filter((prog) => prog.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete program");

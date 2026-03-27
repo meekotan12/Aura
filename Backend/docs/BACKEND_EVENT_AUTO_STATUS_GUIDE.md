@@ -4,6 +4,11 @@
 
 This guide explains how the backend now keeps the stored event workflow status aligned with the computed attendance windows.
 
+## Route Prefix Note
+
+- canonical private event routes in this guide now live under `/api/events/*`
+- the deprecated unprefixed `/events/*` aliases were removed
+
 The system still stores organizer-facing workflow status on `events.status`, but that stored value is now synced from the computed time window instead of only from the raw event end time.
 
 ## Status Layers
@@ -116,8 +121,8 @@ That task scans `upcoming` and `ongoing` events and applies the same service log
 - `Backend/app/services/event_workflow_status.py`
 - `Backend/app/services/event_time_status.py`
 - `Backend/app/services/event_attendance_service.py`
-- `Backend/app/routers/events.py`
-- `Backend/app/routers/attendance.py`
+- `Backend/app/routers/events/`
+- `Backend/app/routers/attendance/`
 - `Backend/app/routers/face_recognition.py`
 - `Backend/app/workers/celery_app.py`
 - `Backend/app/workers/tasks.py`

@@ -1,4 +1,5 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { buildApiUrl } from "./apiUrl";
+import { buildAuthHeaders as buildSharedAuthHeaders } from "../lib/api/client";
 
 export interface StudentEventLocationPayload {
   latitude: number;
@@ -19,6 +20,7 @@ export interface EventLocationVerificationResponse {
       | "early_check_in"
       | "late_check_in"
       | "absent_check_in"
+      | "sign_out_pending"
       | "sign_out_open"
       | "closed";
     current_time: string;
@@ -41,6 +43,7 @@ export interface EventLocationVerificationResponse {
       | "early_check_in"
       | "late_check_in"
       | "absent_check_in"
+      | "sign_out_pending"
       | "sign_out_open"
       | "closed";
     attendance_allowed: boolean;
@@ -99,21 +102,8 @@ export class StudentEventCheckInApiError extends Error {
   }
 }
 
-const getStoredToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
-
 const buildAuthHeaders = () => {
-  const token = getStoredToken();
-  if (!token) {
-    throw new Error("No authentication token found.");
-  }
-
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
+  return buildSharedAuthHeaders(undefined, { "Content-Type": "application/json" });
 };
 
 const parseJson = async <T>(response: Response) =>
@@ -174,7 +164,7 @@ export const verifyStudentEventLocation = async (
   eventId: number,
   location: StudentEventLocationPayload,
 ) => {
-  const response = await fetch(`${BASE_URL}/events/${eventId}/verify-location`, {
+  const response = await fetch(buildApiUrl(`/api/events/${eventId}/verify-location`), {
     method: "POST",
     headers: buildAuthHeaders(),
     body: JSON.stringify({
@@ -196,11 +186,11 @@ export const submitStudentEventAttendanceScan = async ({
   location,
 }: {
   eventId: number;
-  imageBlob: Blob;
+  imageBlob?: Blob | null;
   location: StudentEventLocationPayload;
 }) => {
-  const imageBase64 = await blobToDataUrl(imageBlob);
-  const response = await fetch(`${BASE_URL}/face/face-scan-with-recognition`, {
+  const imageBase64 = imageBlob ? await blobToDataUrl(imageBlob) : null;
+  const response = await fetch(buildApiUrl("/api/face/face-scan-with-recognition"), {
     method: "POST",
     headers: buildAuthHeaders(),
     body: JSON.stringify({

@@ -5,44 +5,23 @@ import NavbarAdmin from "../components/NavbarAdmin";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 import PrivilegedFaceWorkspace from "../components/PrivilegedFaceWorkspace";
 import type { FacialVerificationRole } from "../api/facialVerificationApi";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 import "../css/FacialVerification.css";
 
 interface FacialVerificationPageProps {
   role: FacialVerificationRole;
 }
 
-type StoredUserSnapshot = {
-  email?: string;
-  first_name?: string;
-  last_name?: string;
-  firstName?: string;
-  lastName?: string;
-};
-
-const readStoredUser = (): StoredUserSnapshot | null => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) {
-      return null;
-    }
-    return JSON.parse(raw) as StoredUserSnapshot;
-  } catch {
-    return null;
-  }
-};
-
 const FacialVerification = ({ role }: FacialVerificationPageProps) => {
-  const storedUser = useMemo(() => readStoredUser(), []);
+  const storedUser = useMemo(() => readStoredUserSession(), []);
   const roleLabel = role === "campus_admin" ? "Campus Admin" : "Admin";
   const NavbarComponent = role === "campus_admin" ? NavbarSchoolIT : NavbarAdmin;
   const subjectId = storedUser?.email || role;
   const subjectLabel =
-    storedUser?.first_name ||
-    storedUser?.last_name ||
     storedUser?.firstName ||
     storedUser?.lastName
-      ? `${storedUser?.first_name ?? storedUser?.firstName ?? ""} ${
-          storedUser?.last_name ?? storedUser?.lastName ?? ""
+      ? `${storedUser?.firstName ?? ""} ${
+          storedUser?.lastName ?? ""
         }`.trim()
       : subjectId;
 

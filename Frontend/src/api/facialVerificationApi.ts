@@ -1,4 +1,7 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { buildApiUrl } from "./apiUrl";
+import { buildAuthHeaders as buildSharedAuthHeaders } from "../lib/api/client";
+import { getStoredAuthToken } from "../lib/auth/sessionStore";
+
 const HISTORY_LIMIT = 8;
 const PROFILE_PREFIX = "valid8.face.reference";
 const HISTORY_PREFIX = "valid8.face.history";
@@ -158,23 +161,14 @@ const buildHistoryStorageKey = (
   subjectId: string
 ) => `${HISTORY_PREFIX}:${role}:${subjectId}`;
 
-const getStoredToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
+const getStoredToken = () => getStoredAuthToken();
 
 const resolveAuthToken = (authToken?: string | null) => authToken ?? getStoredToken();
 
 const buildAuthHeaders = (authToken?: string | null) => {
-  const token = resolveAuthToken(authToken);
-  if (!token) {
-    throw new Error("No authentication token is available for face verification.");
-  }
-
-  return {
-    Authorization: `Bearer ${token}`,
+  return buildSharedAuthHeaders(resolveAuthToken(authToken), {
     "Content-Type": "application/json",
-  };
+  });
 };
 
 const blobToDataUrl = (blob: Blob) =>
@@ -344,7 +338,7 @@ export const listFacialVerificationHistory = (
 export const fetchFacialVerificationStatus = async (
   options: FacialVerificationRequestOptions = {}
 ): Promise<FacialVerificationStatus> => {
-  const response = await fetch(`${BASE_URL}/auth/security/face-status`, {
+  const response = await fetch(buildApiUrl("/api/auth/security/face-status"), {
     method: "GET",
     headers: buildAuthHeaders(options.authToken),
   });
@@ -376,7 +370,7 @@ export const checkFacialLiveness = async ({
   authToken,
 }: CheckLivenessInput): Promise<FacialLivenessResult> => {
   const normalizedImage = await normalizeImage(imageSource);
-  const response = await fetch(`${BASE_URL}/auth/security/face-liveness`, {
+  const response = await fetch(buildApiUrl("/api/auth/security/face-liveness"), {
     method: "POST",
     headers: buildAuthHeaders(authToken),
     body: JSON.stringify({ image_base64: normalizedImage }),
@@ -409,7 +403,7 @@ export const clearFacialReferenceProfile = async ({
     return;
   }
 
-  const response = await fetch(`${BASE_URL}/auth/security/face-reference`, {
+  const response = await fetch(buildApiUrl("/api/auth/security/face-reference"), {
     method: "DELETE",
     headers: buildAuthHeaders(token),
   });
@@ -433,7 +427,7 @@ export const saveFacialReferenceProfile = async ({
   authToken,
 }: SaveReferenceInput): Promise<SaveFacialReferenceResult> => {
   const normalizedImage = await normalizeImage(imageSource);
-  const response = await fetch(`${BASE_URL}/auth/security/face-reference`, {
+  const response = await fetch(buildApiUrl("/api/auth/security/face-reference"), {
     method: "POST",
     headers: buildAuthHeaders(authToken),
     body: JSON.stringify({ image_base64: normalizedImage }),
@@ -480,7 +474,7 @@ export const verifyFacialIdentity = async ({
   persistAttemptMode = "always",
 }: VerifyFaceInput): Promise<VerificationResult> => {
   const normalizedProbeImage = await normalizeImage(probeImageSource);
-  const response = await fetch(`${BASE_URL}/auth/security/face-verify`, {
+  const response = await fetch(buildApiUrl("/api/auth/security/face-verify"), {
     method: "POST",
     headers: buildAuthHeaders(authToken),
     body: JSON.stringify({ image_base64: normalizedProbeImage }),

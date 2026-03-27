@@ -6,11 +6,17 @@ This guide explains how login-side effects were moved off the main request path 
 
 For frontend integration details for the new onboarding flow, see `Backend/docs/BACKEND_FRONTEND_AUTH_ONBOARDING_GUIDE.md`.
 
+## Route Prefix Note
+
+- canonical private route families mentioned in this guide now live under `/api/*`
+- this especially applies to `/api/users/*`, `/api/auth/security/*`, and `/api/face/*`
+- public auth entry routes such as `/login`, `/token`, `/auth/mfa/verify`, and `/auth/change-password` stay unchanged
+
 ## Main Files
 
 - `Backend/app/routers/auth.py`
 - `Backend/app/services/auth_task_dispatcher.py`
-- `Backend/app/services/email_service.py`
+- `Backend/app/services/email_service/`
 - `Backend/app/services/notification_center_service.py`
 - `Backend/app/workers/tasks.py`
 - `Backend/app/core/database.py`
@@ -29,7 +35,7 @@ For frontend integration details for the new onboarding flow, see `Backend/docs/
 - if Celery publish fails, the backend falls back to FastAPI background tasks so the HTTP response can still finish quickly
 - obvious SMTP configuration errors are still validated before scheduling MFA delivery
 - forced SQL query logging was removed unless `SQL_ECHO=true`
-- the canonical async task package now lives in `Backend/app/workers/`, while `Backend/app/worker/` remains only as a compatibility wrapper
+- the canonical async task package now lives in `Backend/app/workers/`; the old `Backend/app/worker/` compatibility wrapper and `app.worker.tasks.*` aliases were removed
 - newly created onboarding accounts now keep `must_change_password=false`, so they can continue past login with the issued temporary password
 - temporary passwords issued by reset flows still keep `must_change_password=true`
 - `/auth/change-password` now validates `current_password` with the same password verifier used by `/login`
@@ -175,6 +181,8 @@ Example response:
 - the prompt can be dismissed through `POST /auth/password-change-prompt/dismiss` without affecting the reset-password enforcement flow
 - forced password change now checks the current password through the same hash-verification path used by login, so emailed temporary passwords stay valid there too
 - `POST /api/school/admin/create-school-it` and `POST /users/` now give the caller a reliable first-login password path by either honoring the supplied password or returning `generated_temporary_password`
+- `POST /auth/forgot-password` now creates pending requests for active school-scoped `campus_admin` accounts as well as students
+- `GET /auth/password-reset-requests` now hides privileged-target requests from campus-admin viewers because those still require platform-admin approval
 
 ## Testing
 
@@ -195,7 +203,10 @@ Recommended manual checks:
 9. For a privileged account, confirm `face_pending` onboarding still allows both `/auth/change-password` and `POST /auth/password-change-prompt/dismiss`.
 10. Approve a password reset and confirm the temporary reset password is still forced through `/auth/change-password`.
 11. On the forced password-change screen, submit the same temporary password used at login as `current_password` and confirm the change succeeds.
-12. Call `GET /health` and confirm the pool snapshot matches your configured `DB_POOL_*` values.
-13. Run a login-heavy load test and confirm `checked_out_connections` stays below total capacity most of the time.
-14. Submit a login attempt with a password longer than `72` bytes and confirm the API returns `401 Incorrect email or password` instead of `500`.
-15. Log in with an existing pre-change account and confirm the correct password still succeeds.
+12. Submit `POST /auth/forgot-password` for an active school-scoped `campus_admin` account and confirm a pending request row is created.
+13. Call `GET /auth/password-reset-requests` as a platform admin and confirm the privileged-target request is visible.
+14. Call `GET /auth/password-reset-requests` as a campus admin in the same school and confirm that privileged-target request is hidden.
+15. Call `GET /health` and confirm the pool snapshot matches your configured `DB_POOL_*` values.
+16. Run a login-heavy load test and confirm `checked_out_connections` stays below total capacity most of the time.
+17. Submit a login attempt with a password longer than `72` bytes and confirm the API returns `401 Incorrect email or password` instead of `500`.
+18. Log in with an existing pre-change account and confirm the correct password still succeeds.

@@ -14,11 +14,14 @@ from app.schemas.attendance import (
 )
 from app.services.attendance_status import (
     ATTENDED_STATUS_VALUES,
+    empty_attendance_display_status_counts,
     empty_attendance_status_counts,
     finalize_completed_attendance_status,
+    is_completed_attended_status,
     is_attended_status,
     is_late_arrival,
     normalize_attendance_status,
+    resolve_attendance_display_status,
 )
 
 
@@ -44,9 +47,28 @@ def test_empty_status_counts_include_late() -> None:
     }
 
 
+def test_empty_display_status_counts_include_incomplete() -> None:
+    assert empty_attendance_display_status_counts() == {
+        "present": 0,
+        "late": 0,
+        "absent": 0,
+        "excused": 0,
+        "incomplete": 0,
+    }
+
+
 def test_normalize_attendance_status_handles_enum_values() -> None:
     assert normalize_attendance_status(SchemaAttendanceStatus.LATE) == "late"
     assert normalize_attendance_status(ModelAttendanceStatus.PRESENT) == "present"
+
+
+def test_display_status_and_validity_helpers_require_sign_out_completion() -> None:
+    completed_at = datetime(2026, 3, 27, 10, 0, 0, tzinfo=timezone.utc)
+
+    assert resolve_attendance_display_status(stored_status="present", time_out=None) == "incomplete"
+    assert resolve_attendance_display_status(stored_status="late", time_out=completed_at) == "late"
+    assert is_completed_attended_status(stored_status="present", time_out=None) is False
+    assert is_completed_attended_status(stored_status="present", time_out=completed_at) is True
 
 
 def test_report_models_accept_late_fields() -> None:

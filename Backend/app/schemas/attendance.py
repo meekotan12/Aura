@@ -17,6 +17,12 @@ class AttendanceStatus(str, Enum):
     LATE = "late"
     ABSENT = "absent"
     EXCUSED = "excused"
+    INCOMPLETE = "incomplete"
+
+
+class AttendanceCompletionState(str, Enum):
+    INCOMPLETE = "incomplete"
+    COMPLETED = "completed"
 
 class AttendanceBase(BaseModel):
     event_id: int = Field(..., gt=0)
@@ -40,6 +46,9 @@ class Attendance(AttendanceBase):
     time_out: Optional[datetime] = None
     check_in_status: Optional[str] = None
     check_out_status: Optional[str] = None
+    display_status: Optional[AttendanceStatus] = None
+    completion_state: AttendanceCompletionState = AttendanceCompletionState.COMPLETED
+    is_valid_attendance: bool = True
     verified_by: Optional[int] = Field(None, gt=0)
     notes: Optional[str] = None
     
@@ -58,7 +67,7 @@ class Attendance(AttendanceBase):
 
 class AttendanceWithStudent(BaseModel):
     attendance: Attendance
-    student_id: str
+    student_id: Optional[str] = None
     student_name: str    
 
 
@@ -71,6 +80,9 @@ class StudentAttendanceRecord(BaseModel):
     check_in_status: Optional[str] = None
     check_out_status: Optional[str] = None
     status: AttendanceStatus
+    display_status: AttendanceStatus = AttendanceStatus.INCOMPLETE
+    completion_state: AttendanceCompletionState = AttendanceCompletionState.COMPLETED
+    is_valid_attendance: bool = True
     method: AttendanceMethod
     notes: Optional[str] = None
     duration_minutes: Optional[int] = None  # Calculated field
@@ -78,7 +90,7 @@ class StudentAttendanceRecord(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class StudentAttendanceResponse(BaseModel):
-    student_id: str
+    student_id: Optional[str] = None
     student_name: str
     total_records: int
     attendances: List[StudentAttendanceRecord]    
@@ -93,6 +105,7 @@ class ProgramBreakdownItem(BaseModel):
     total: int
     present: int
     late: int = 0
+    incomplete: int = 0
     absent: int
 
 
@@ -103,6 +116,7 @@ class AttendanceReportResponse(BaseModel):
     total_participants: int
     attendees: int
     late_attendees: int = 0
+    incomplete_attendees: int = 0
     absentees: int
     attendance_rate: float
     programs: List[ProgramFilterItem]  # For program filter dropdown
@@ -110,11 +124,12 @@ class AttendanceReportResponse(BaseModel):
 
 # New Pydantic models for student attendance overview
 class StudentAttendanceSummary(BaseModel):
-    student_id: str
+    student_id: Optional[str] = None
     student_name: str
     total_events: int
     attended_events: int
     late_events: int = 0
+    incomplete_events: int = 0
     absent_events: int
     excused_events: int
     attendance_rate: float
@@ -131,6 +146,9 @@ class StudentAttendanceDetail(BaseModel):
     check_in_status: Optional[str] = None
     check_out_status: Optional[str] = None
     status: AttendanceStatus
+    display_status: AttendanceStatus = AttendanceStatus.INCOMPLETE
+    completion_state: AttendanceCompletionState = AttendanceCompletionState.COMPLETED
+    is_valid_attendance: bool = True
     method: str
     notes: Optional[str] = None
     duration_minutes: Optional[int] = None
@@ -143,7 +161,7 @@ class StudentAttendanceReport(BaseModel):
 
 class StudentListItem(BaseModel):
     id: int
-    student_id: str
+    student_id: Optional[str] = None
     full_name: str
     department_name: Optional[str] = None
     program_name: Optional[str] = None

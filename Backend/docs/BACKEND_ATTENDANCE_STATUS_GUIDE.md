@@ -4,11 +4,26 @@
 
 This guide documents how attendance status is now recorded in the backend with explicit sign-in and sign-out audit fields.
 
+## Null Student IDs In Responses
+
+- attendance response payloads may return `student_id = null` when the student profile is valid but the school has not assigned an external student identifier yet
+- this applies to student self-service records, attendance overview rows, and student attendance reports
+- frontend code should treat `student_id` as nullable display data, not as a guaranteed identifier for record integrity
+
+## Route Prefix Note
+
+- canonical private route families in this guide now live under `/api/events/*` and `/api/attendance/*`
+- the deprecated unprefixed `/events/*` and `/attendance/*` aliases were removed
+
 The backend now separates:
 
 - `check_in_status`: what the sign-in window decided
 - `check_out_status`: whether sign-out completed inside an allowed sign-out window
 - `status`: the final attendance status used by reports and dashboards
+- computed API-only fields:
+  - `display_status`
+  - `completion_state`
+  - `is_valid_attendance`
 
 ## Valid Final Statuses
 
@@ -84,6 +99,12 @@ If sign-out is missing or finalized after the effective close:
 
 - `check_out_status = "absent"`
 
+If an attendance row exists with no `time_out` yet:
+
+- `display_status = "incomplete"`
+- `completion_state = "incomplete"`
+- `is_valid_attendance = false`
+
 ## Final Status Matrix
 
 The backend finalizes `status` with this matrix:
@@ -143,15 +164,19 @@ Implementation:
 
 For reporting and attendance-rate calculations:
 
-- `present` counts as attended
-- `late` counts as attended
+- only completed `present` counts as attended
+- only completed `late` counts as attended
+- `incomplete` is reported separately and does not count as attended
 - `absent` does not count as attended
 - `excused` does not count as attended
 
 Existing report models already expose late-aware summary fields such as:
 
 - `ProgramBreakdownItem.late`
+- `ProgramBreakdownItem.incomplete`
 - `StudentAttendanceSummary.late_events`
+- `StudentAttendanceSummary.incomplete_events`
+- `AttendanceReportResponse.incomplete_attendees`
 
 ## Main Backend Touchpoints
 
@@ -163,7 +188,7 @@ Existing report models already expose late-aware summary fields such as:
 - `Backend/app/services/attendance_status.py`
 - `Backend/app/services/event_time_status.py`
 - `Backend/app/services/event_attendance_service.py`
-- `Backend/app/routers/attendance.py`
+- `Backend/app/routers/attendance/`
 - `Backend/app/routers/face_recognition.py`
 
 ## Testing
@@ -181,5 +206,6 @@ Recommended checks:
 6. Try to sign out before sign-out opens and confirm the backend rejects it.
 7. Open `POST /events/{event_id}/sign-out/open-early` and confirm the same active attendance can sign out successfully.
 8. Confirm final rows include `check_in_status`, `check_out_status`, and the correct final `status`.
-9. Create or edit an event so it starts within its configured early window and confirm the returned event now includes `present_until_override_at` and `late_until_override_at`.
-10. During that override window, confirm students stay `present` until the effective present cutoff and only become `late` after that cutoff.
+9. Confirm unfinished rows are returned as `display_status = "incomplete"` and `is_valid_attendance = false`.
+10. Create or edit an event so it starts within its configured early window and confirm the returned event now includes `present_until_override_at` and `late_until_override_at`.
+11. During that override window, confirm students stay `present` until the effective present cutoff and only become `late` after that cutoff.

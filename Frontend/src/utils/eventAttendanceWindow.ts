@@ -5,6 +5,7 @@ export type EventWindowStage =
   | "early_check_in"
   | "late_check_in"
   | "absent_check_in"
+  | "sign_out_pending"
   | "sign_out_open"
   | "closed";
 
@@ -129,10 +130,30 @@ export const getEffectiveLateCutoff = (
 };
 
 export const getSignOutCloseTime = (
-  event: Pick<Event, "end_datetime" | "sign_out_grace_minutes">
+  event: Pick<Event, "end_datetime" | "sign_out_grace_minutes" | "sign_out_override_until">
 ) => {
   const end = parseEventDateTime(event.end_datetime);
-  return new Date(end.getTime() + clampMinutes(event.sign_out_grace_minutes) * 60_000);
+  const defaultClose = new Date(
+    end.getTime() + clampMinutes(event.sign_out_grace_minutes) * 60_000
+  );
+  const overrideClose = parseEventDateTime(event.sign_out_override_until);
+
+  if (Number.isFinite(overrideClose.getTime())) {
+    return overrideClose.getTime() < defaultClose.getTime()
+      ? overrideClose
+      : defaultClose;
+  }
+
+  return defaultClose;
+};
+
+export const getSignOutOpenTime = (
+  event: Pick<Event, "end_datetime" | "sign_out_open_delay_minutes">
+) => {
+  const end = parseEventDateTime(event.end_datetime);
+  return new Date(
+    end.getTime() + clampMinutes(event.sign_out_open_delay_minutes) * 60_000
+  );
 };
 
 export const getEventWindowStage = (
@@ -143,6 +164,8 @@ export const getEventWindowStage = (
     | "early_check_in_minutes"
     | "late_threshold_minutes"
     | "sign_out_grace_minutes"
+    | "sign_out_open_delay_minutes"
+    | "sign_out_override_until"
     | "present_until_override_at"
     | "late_until_override_at"
   >,
@@ -155,6 +178,7 @@ export const getEventWindowStage = (
   );
   const effectivePresentCutoff = getEffectivePresentCutoff(event);
   const effectiveLateCutoff = getEffectiveLateCutoff(event);
+  const signOutOpenTime = getSignOutOpenTime(event);
   const effectiveSignOutClose = getSignOutCloseTime(event);
 
   if (now.getTime() < earlyCheckInOpensAt.getTime()) {
@@ -163,8 +187,11 @@ export const getEventWindowStage = (
   if (now.getTime() < effectivePresentCutoff.getTime()) {
     return "early_check_in";
   }
-  if (now.getTime() >= end.getTime()) {
+  if (now.getTime() >= signOutOpenTime.getTime()) {
     return now.getTime() <= effectiveSignOutClose.getTime() ? "sign_out_open" : "closed";
+  }
+  if (now.getTime() >= end.getTime()) {
+    return "sign_out_pending";
   }
   if (now.getTime() <= effectiveLateCutoff.getTime()) {
     return "late_check_in";
@@ -180,13 +207,15 @@ export const getStudentEventActionState = (
     | "early_check_in_minutes"
     | "late_threshold_minutes"
     | "sign_out_grace_minutes"
+    | "sign_out_open_delay_minutes"
+    | "sign_out_override_until"
     | "present_until_override_at"
     | "late_until_override_at"
   >,
-  latestRecord?: Pick<AttendanceRecord, "time_out"> | null,
+  latestRecord?: Pick<AttendanceRecord, "time_out" | "completion_state"> | null,
   now = new Date()
 ): StudentEventActionState => {
-  if (latestRecord?.time_out) {
+  if (latestRecord?.completion_state === "completed" || latestRecord?.time_out) {
     return "done";
   }
 
@@ -194,6 +223,9 @@ export const getStudentEventActionState = (
   if (latestRecord) {
     if (stage === "sign_out_open") {
       return "sign_out";
+    }
+    if (stage === "sign_out_pending") {
+      return "waiting_sign_out";
     }
     if (stage === "closed") {
       return "closed";

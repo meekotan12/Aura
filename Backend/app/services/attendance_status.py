@@ -19,6 +19,13 @@ from app.services.event_time_status import (
 
 ALL_ATTENDANCE_STATUS_VALUES: tuple[str, ...] = ("present", "late", "absent", "excused")
 ATTENDED_STATUS_VALUES: tuple[str, ...] = ("present", "late")
+ATTENDANCE_DISPLAY_STATUS_VALUES: tuple[str, ...] = (
+    "present",
+    "late",
+    "absent",
+    "excused",
+    "incomplete",
+)
 
 
 def normalize_attendance_status(value: Any) -> str:
@@ -33,8 +40,38 @@ def is_attended_status(value: Any) -> bool:
     return normalize_attendance_status(value) in ATTENDED_STATUS_VALUES
 
 
+def is_attendance_completed(*, time_out: datetime | None) -> bool:
+    return time_out is not None
+
+
+def resolve_attendance_display_status(
+    *,
+    stored_status: Any,
+    time_out: datetime | None,
+) -> str:
+    if not is_attendance_completed(time_out=time_out):
+        return "incomplete"
+
+    normalized_status = normalize_attendance_status(stored_status)
+    if normalized_status in ALL_ATTENDANCE_STATUS_VALUES:
+        return normalized_status
+    return "absent"
+
+
+def is_completed_attended_status(
+    *,
+    stored_status: Any,
+    time_out: datetime | None,
+) -> bool:
+    return is_attendance_completed(time_out=time_out) and is_attended_status(stored_status)
+
+
 def empty_attendance_status_counts() -> dict[str, int]:
     return {status: 0 for status in ALL_ATTENDANCE_STATUS_VALUES}
+
+
+def empty_attendance_display_status_counts() -> dict[str, int]:
+    return {status: 0 for status in ATTENDANCE_DISPLAY_STATUS_VALUES}
 
 
 def normalize_attendance_datetime(

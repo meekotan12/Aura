@@ -1,0 +1,24 @@
+SSG Frontend UI Pages Needed
+
+1. School IT: SSG Role Management
+2. School IT: Assign Students to Roles
+3. SSG Members: SSG Portal (permissions, roles, assignments, announcements, events)
+4. SSG Members: Create Event
+5. SSG Approvers: Approve/Reject Events
+6. SSG Members: Create Announcement
+7. Students: Announcements
+8. Students: Upcoming Events
+9. Students: Notifications Panel (with unread badge)
+
+SSG Flow (Frontend Perspective)
+
+1. School IT creates SSG roles for a school.
+2. School IT assigns permissions to each role.
+3. School IT assigns students to roles per school year.
+4. Students with SSG roles see extra SSG action cards on their dashboard.
+5. SSG members with create_event permission create events (status = pending).
+6. SSG approvers with approve_event permission approve or reject events.
+7. Approved events appear in Student dashboards as Upcoming Events (next 7 days).
+8. 24 hours before an approved event, students receive an in-app notification.
+9. Students open the notification bell to read and mark notifications as read.
+10. SSG members with post_announcement permission create announcements; all students in the school can view them.

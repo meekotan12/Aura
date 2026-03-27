@@ -21,6 +21,7 @@ import {
   hasAttendanceOverrideWindow,
   getSignOutCloseTime,
 } from "../utils/eventAttendanceWindow";
+import { formatAttendanceDateTime } from "../utils/attendanceDateTime";
 import { getGovernanceEventsPath } from "../utils/governanceEventPaths";
 import { formatEventDepartments, formatEventPrograms } from "../utils/eventScopeLabels";
 import "../css/SsgWorkspace.css";
@@ -30,7 +31,7 @@ interface GovernanceEventDetailsPageProps {
   unitType: GovernanceContext;
 }
 
-const formatDateTime = (datetime: string) => formatManilaDateTime(datetime);
+const formatEventDateTime = (datetime: string) => formatManilaDateTime(datetime);
 
 const formatOptionalNumber = (value?: number | null, suffix = "") =>
   value == null ? "Not set" : `${value}${suffix}`;
@@ -120,7 +121,7 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
     }
 
     const closeTime = new Date(Date.now() + selectedCloseMinutes * 60_000);
-    return formatDateTime(closeTime.toISOString());
+    return formatEventDateTime(closeTime.toISOString());
   }, [eventRecord, selectedCloseMinutes]);
 
   const currentSignOutCloseLabel = useMemo(() => {
@@ -128,7 +129,7 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
       return "Not set";
     }
 
-    return formatDateTime(getSignOutCloseTime(eventRecord).toISOString());
+    return formatEventDateTime(getSignOutCloseTime(eventRecord).toISOString());
   }, [eventRecord]);
   const attendanceOverrideActive = useMemo(
     () => (eventRecord ? hasAttendanceOverrideWindow(eventRecord) : false),
@@ -139,19 +140,20 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
       return "Not set";
     }
 
-    return formatDateTime(getEffectivePresentCutoff(eventRecord).toISOString());
+    return formatEventDateTime(getEffectivePresentCutoff(eventRecord).toISOString());
   }, [eventRecord]);
   const effectiveLateUntilLabel = useMemo(() => {
     if (!eventRecord) {
       return "Not set";
     }
 
-    return formatDateTime(getEffectiveLateCutoff(eventRecord).toISOString());
+    return formatEventDateTime(getEffectiveLateCutoff(eventRecord).toISOString());
   }, [eventRecord]);
 
   const statCards = useMemo(() => {
     const presentCount = stats?.statuses.present?.count ?? 0;
     const lateCount = stats?.statuses.late?.count ?? 0;
+    const incompleteCount = stats?.statuses.incomplete?.count ?? 0;
     const absentCount = stats?.statuses.absent?.count ?? 0;
 
     return [
@@ -169,6 +171,11 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
         label: "Present / Late",
         value: `${presentCount} / ${lateCount}`,
         hint: "Current attendance breakdown",
+      },
+      {
+        label: "Incomplete",
+        value: incompleteCount,
+        hint: "Signed in but missing a completed sign-out",
       },
       {
         label: "Absent",
@@ -221,10 +228,10 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
       setShowSignOutEarlyForm(false);
       setSignOutMessage(
         useCurrentGraceMinutes
-          ? `Sign-out is open now and will close at ${formatDateTime(
+            ? `Sign-out is open now and will close at ${formatEventDateTime(
               getSignOutCloseTime(updatedEvent).toISOString()
             )} using the current grace minutes.`
-          : `Sign-out is open now and will close at ${formatDateTime(
+            : `Sign-out is open now and will close at ${formatEventDateTime(
               getSignOutCloseTime(updatedEvent).toISOString()
             )} using your custom ${updatedEvent.sign_out_grace_minutes ?? selectedCloseMinutes} minute window.`
       );
@@ -385,11 +392,11 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
               </div>
               <div className="ssg-feature-field">
                 <label>Start</label>
-                <div className="ssg-muted-note">{formatDateTime(eventRecord.start_datetime)}</div>
+                  <div className="ssg-muted-note">{formatEventDateTime(eventRecord.start_datetime)}</div>
               </div>
               <div className="ssg-feature-field">
                 <label>End</label>
-                <div className="ssg-muted-note">{formatDateTime(eventRecord.end_datetime)}</div>
+                  <div className="ssg-muted-note">{formatEventDateTime(eventRecord.end_datetime)}</div>
               </div>
               <div className="ssg-feature-field">
                 <label>Early Check-In Window</label>
@@ -422,7 +429,7 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
               <div className="ssg-feature-field">
                 <label>Derived Absence Cutoff</label>
                 <div className="ssg-muted-note">
-                  {formatDateTime(getDerivedAbsenceCutoff(eventRecord).toISOString())}
+                        {formatEventDateTime(getDerivedAbsenceCutoff(eventRecord).toISOString())}
                 </div>
               </div>
               <div className="ssg-feature-field">
@@ -600,10 +607,10 @@ const GovernanceEventDetailsPage = ({ unitType }: GovernanceEventDetailsPageProp
                           <span className="ssg-feature-pill">{item.attendance.status}</span>
                         </td>
                         <td data-label="Method">{item.attendance.method}</td>
-                        <td data-label="Time In">{formatDateTime(item.attendance.time_in)}</td>
+                        <td data-label="Time In">{formatAttendanceDateTime(item.attendance.time_in)}</td>
                         <td data-label="Time Out">
                           {item.attendance.time_out
-                            ? formatDateTime(item.attendance.time_out)
+                            ? formatAttendanceDateTime(item.attendance.time_out)
                             : "Active / no time out"}
                         </td>
                       </tr>

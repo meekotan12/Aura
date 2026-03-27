@@ -47,10 +47,10 @@ EXEMPT_PATH_PREFIXES = {
 FACE_VERIFICATION_EXEMPT_PATH_PREFIXES = {
     PASSWORD_CHANGE_ENDPOINT,
     PASSWORD_CHANGE_PROMPT_DISMISS_ENDPOINT,
-    "/auth/security/face-status",
-    "/auth/security/face-liveness",
-    "/auth/security/face-reference",
-    "/auth/security/face-verify",
+    "/api/auth/security/face-status",
+    "/api/auth/security/face-liveness",
+    "/api/auth/security/face-reference",
+    "/api/auth/security/face-verify",
 }
 
 
@@ -226,7 +226,7 @@ def _raise_face_verification_required() -> None:
         detail={
             "code": "face_verification_required",
             "message": "Face verification is required before accessing protected resources.",
-            "verify_endpoint": "/auth/security/face-verify",
+            "verify_endpoint": "/api/auth/security/face-verify",
         },
     )
 

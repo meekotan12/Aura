@@ -5,6 +5,7 @@ Role: Test layer. It protects the preview-first import contract from regressions
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 
@@ -98,6 +99,14 @@ def _build_workbook_bytes(rows: list[list[str]]) -> bytes:
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+def _build_csv_bytes(rows: list[list[str]]) -> bytes:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(EXPECTED_HEADERS)
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8")
 
 
 def test_preview_import_students_reports_existing_database_conflicts(
@@ -316,6 +325,51 @@ def test_import_students_requires_preview_token_and_queues_preview_manifest_job(
     ]
 
 
+def test_preview_import_students_accepts_csv_uploads(
+    client,
+    test_db,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("IMPORT_STORAGE_DIR", str(tmp_path))
+
+    school = _create_school(test_db, code="IMPORT-PREVIEW-CSV")
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="campus.preview.csv@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+    )
+
+    csv_bytes = _build_csv_bytes(
+        [
+            [
+                "STU-00030",
+                "csv.student@example.edu",
+                "CSV",
+                "Student",
+                "D",
+                "Data Science",
+                "BS Data Science",
+            ]
+        ]
+    )
+
+    response = client.post(
+        "/api/admin/import-students/preview",
+        headers=_auth_headers(campus_admin),
+        files={"file": ("students.csv", csv_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["can_commit"] is True
+    assert payload["valid_rows"] == 1
+    assert payload["invalid_rows"] == 0
+    assert payload["preview_token"]
+
+
 def test_remove_invalid_preview_rows_keeps_only_valid_rows_and_allows_import(
     client,
     test_db,
@@ -445,7 +499,87 @@ def test_remove_invalid_preview_rows_keeps_only_valid_rows_and_allows_import(
     ]
 
 
-def test_preview_import_students_rejects_course_department_mismatch(
+def test_import_students_falls_back_to_in_process_job_when_celery_dispatch_fails(
+    client,
+    test_db,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("IMPORT_STORAGE_DIR", str(tmp_path))
+
+    school = _create_school(test_db, code="IMPORT-PREVIEW-FALLBACK")
+    _create_department_and_program(test_db, school_id=school.id)
+    campus_admin = _create_user_with_role(
+        test_db,
+        email="campus.preview.fallback@example.com",
+        role_name="campus_admin",
+        password="CampusPass123!",
+        school_id=school.id,
+    )
+
+    workbook_bytes = _build_workbook_bytes(
+        [
+            [
+                "STU-00020",
+                "fallback.student@example.edu",
+                "Fallback",
+                "Student",
+                "B",
+                "Computer Science",
+                "BS Computer Science",
+            ]
+        ]
+    )
+
+    preview_response = client.post(
+        "/api/admin/import-students/preview",
+        headers=_auth_headers(campus_admin),
+        files={
+            "file": (
+                "students.xlsx",
+                workbook_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert preview_response.status_code == 200
+    preview_token = preview_response.json()["preview_token"]
+    assert preview_token
+
+    fallback_runs: list[str] = []
+
+    def _raise_send_task(_name: str, *args, **kwargs):
+        raise RuntimeError("celery broker unavailable")
+
+    def _fake_process_job(self, job_id: str):
+        fallback_runs.append(job_id)
+
+    monkeypatch.setattr("app.routers.admin_import.celery_app.send_task", _raise_send_task)
+    monkeypatch.setattr("app.services.student_import_service.celery_app.send_task", _raise_send_task)
+    monkeypatch.setattr("app.routers.admin_import.StudentImportService.process_job", _fake_process_job)
+
+    import_response = client.post(
+        "/api/admin/import-students",
+        headers=_auth_headers(campus_admin),
+        data={"preview_token": preview_token},
+    )
+
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["status"] == "pending"
+
+    job = (
+        test_db.query(BulkImportJob)
+        .filter(BulkImportJob.id == import_payload["job_id"])
+        .first()
+    )
+    assert job is not None
+    assert job.status == "pending"
+    assert fallback_runs == [import_payload["job_id"]]
+
+
+def test_preview_import_students_accepts_new_department_program_pairings(
     client,
     test_db,
     tmp_path,
@@ -495,8 +629,7 @@ def test_preview_import_students_rejects_course_department_mismatch(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["can_commit"] is False
-    assert payload["valid_rows"] == 0
-    assert payload["invalid_rows"] == 1
-    assert payload["rows"][0]["status"] == "failed"
-    assert "Course is not offered by the selected Department" in payload["rows"][0]["errors"]
+    assert payload["can_commit"] is True
+    assert payload["valid_rows"] == 1
+    assert payload["invalid_rows"] == 0
+    assert payload["rows"][0]["status"] == "valid"

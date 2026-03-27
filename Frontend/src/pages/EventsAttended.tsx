@@ -4,17 +4,26 @@ import { FaArrowRight, FaCalendarAlt, FaCheckCircle, FaClock, FaSearch } from "r
 import { fetchMyAttendanceRecords, type AttendanceRecord } from "../api/eventsApi";
 import { NavbarStudent } from "../components/NavbarStudent";
 import { NavbarStudentSSG } from "../components/NavbarStudentSSG";
+import {
+  formatAttendanceDate,
+  formatAttendanceTime,
+  getAttendanceTimestamp,
+} from "../utils/attendanceDateTime";
 
 interface EventsAttendedProps {
   role: string;
 }
 
-const getStatusLabel = (status: AttendanceRecord["status"]) => {
+const getStatusLabel = (
+  status: AttendanceRecord["display_status"] | AttendanceRecord["status"] | undefined
+) => {
   switch (status) {
     case "present":
       return "Present";
     case "late":
       return "Late";
+    case "incomplete":
+      return "Incomplete";
     case "absent":
       return "Absent";
     case "excused":
@@ -60,21 +69,6 @@ export const EventsAttended: React.FC<EventsAttendedProps> = ({ role }) => {
     fetchMyAttendance();
   }, []);
 
-  const formatDate = (datetime: string) => {
-    return new Date(datetime).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  };
-
-  const formatTime = (datetime: string) => {
-    return new Date(datetime).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
   const filteredRecords = useMemo(
     () =>
       records
@@ -83,7 +77,7 @@ export const EventsAttended: React.FC<EventsAttendedProps> = ({ role }) => {
         )
         .sort(
           (left, right) =>
-            new Date(right.time_in).getTime() - new Date(left.time_in).getTime()
+            getAttendanceTimestamp(right.time_in) - getAttendanceTimestamp(left.time_in)
         ),
     [records, searchTerm]
   );
@@ -99,12 +93,21 @@ export const EventsAttended: React.FC<EventsAttendedProps> = ({ role }) => {
       },
       {
         label: "Attended",
-        value: records.filter((record) => attendedStatuses.has(record.status)).length,
+        value: records.filter((record) =>
+          attendedStatuses.has(record.display_status ?? record.status)
+        ).length,
         icon: <FaCheckCircle />,
       },
       {
         label: "Late Arrivals",
-        value: records.filter((record) => record.status === "late").length,
+        value: records.filter((record) => (record.display_status ?? record.status) === "late")
+          .length,
+        icon: <FaClock />,
+      },
+      {
+        label: "Incomplete",
+        value: records.filter((record) => (record.display_status ?? record.status) === "incomplete")
+          .length,
         icon: <FaClock />,
       },
     ];
@@ -180,12 +183,12 @@ export const EventsAttended: React.FC<EventsAttendedProps> = ({ role }) => {
                 filteredRecords.map((record) => (
                   <tr key={record.id}>
                     <td>{record.event_name}</td>
-                    <td>{formatDate(record.time_in)}</td>
-                    <td>{formatTime(record.time_in)}</td>
-                    <td>{record.time_out ? formatTime(record.time_out) : "-"}</td>
+                    <td>{formatAttendanceDate(record.time_in, "-")}</td>
+                    <td>{formatAttendanceTime(record.time_in, "-")}</td>
+                    <td>{record.time_out ? formatAttendanceTime(record.time_out, "-") : "-"}</td>
                     <td>
                       <span className={`status ${record.status}`}>
-                        {getStatusLabel(record.status)}
+                        {getStatusLabel(record.display_status ?? record.status)}
                       </span>
                     </td>
                   </tr>

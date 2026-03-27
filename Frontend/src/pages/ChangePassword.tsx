@@ -1,9 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { changePassword, logout } from "../api/authApi";
 import { resolvePostAuthenticationPath } from "../authFlow";
 import { primeGovernanceAccessCache } from "../hooks/useGovernanceAccess";
+import { setStoredUser } from "../lib/auth/sessionStore";
+import { readStoredUserSession } from "../lib/auth/storedUser";
 
 const hasStrongPassword = (password: string): boolean =>
   /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password);
@@ -16,47 +18,28 @@ const ChangePassword = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const token =
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token");
+  const storedUser = readStoredUserSession();
 
-  const storedUser = useMemo(() => {
-    const raw = localStorage.getItem("user");
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const resolveNextPath = async (
-    roles: string[],
-    authToken: string | null,
-    userId: number | null
-  ) => {
+  const resolveNextPath = async (roles: string[], userId: number | null) => {
     await primeGovernanceAccessCache(true);
     return resolvePostAuthenticationPath({
       roles,
       mustChangePassword: false,
-      authToken,
       userId,
     });
   };
 
   useEffect(() => {
-    if (!token || !storedUser) {
+    if (!storedUser) {
       navigate("/", { replace: true });
       return;
     }
-    const needsPasswordChange = Boolean(storedUser.mustChangePassword || storedUser.must_change_password);
+    const needsPasswordChange = storedUser.mustChangePassword;
     if (!needsPasswordChange) {
       let cancelled = false;
       const redirectToResolvedPath = async () => {
         const nextPath = await resolveNextPath(
           storedUser.roles || [],
-          token,
           typeof storedUser.id === "number" ? storedUser.id : null
         );
         if (!cancelled) {
@@ -69,7 +52,7 @@ const ChangePassword = () => {
         cancelled = true;
       };
     }
-  }, [navigate, storedUser, token]);
+  }, [navigate, storedUser]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -96,10 +79,9 @@ const ChangePassword = () => {
       return;
     }
 
-    if (!(storedUser?.mustChangePassword || storedUser?.must_change_password)) {
+    if (!storedUser?.mustChangePassword) {
       const nextPath = await resolveNextPath(
         storedUser?.roles || [],
-        token,
         typeof storedUser?.id === "number" ? storedUser.id : null
       );
       navigate(nextPath, { replace: true });
@@ -115,13 +97,12 @@ const ChangePassword = () => {
         mustChangePassword: false,
         must_change_password: false,
       };
-      localStorage.setItem("user", JSON.stringify(updatedUser));
+      setStoredUser(JSON.stringify(updatedUser));
 
       setSuccess("Password changed successfully. Redirecting...");
       window.setTimeout(async () => {
         const nextPath = await resolveNextPath(
           updatedUser.roles || [],
-          token,
           typeof updatedUser.id === "number" ? updatedUser.id : null
         );
         navigate(nextPath, { replace: true });

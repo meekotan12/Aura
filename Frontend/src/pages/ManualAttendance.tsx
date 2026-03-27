@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { NavbarStudentSSG } from "../components/NavbarStudentSSG";
 import { NavbarStudent } from "../components/NavbarStudent";
 import SsgFeatureShell from "../components/SsgFeatureShell";
-import type { EventAttendanceWithStudent } from "../api/eventsApi";
+import {
+  fetchActiveEventAttendances,
+  markAbsentWithoutTimeOut,
+  recordAttendanceTimeOut,
+  recordManualAttendance,
+  type EventAttendanceWithStudent,
+} from "../api/attendanceApi";
+import { fetchAllEvents } from "../api/eventsApi";
+import {
+  formatAttendanceDate,
+  formatAttendanceTime,
+} from "../utils/attendanceDateTime";
 
 interface ManualAttendanceProps {
   role: string;
@@ -23,20 +33,19 @@ interface Attendance {
   student: Student; // Add this to include student details
   event_id: number;
   time_in: string;
-  time_out?: string;
+  time_out?: string | null;
   status: string;
   method: string;
-  notes?: string;
+  notes?: string | null;
 }
 
 interface Student {
   id: number;
-  student_id: string; // The actual student ID (like "2020-1234")
+  student_id: string | null; // The actual student ID (like "2020-1234")
   name: string;
 }
 
 export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
-  const navigate = useNavigate();
   const governanceContext =
     role === "ssg" ? "SSG" : role === "sg" ? "SG" : role === "org" ? "ORG" : null;
   const isGovernanceRole = Boolean(governanceContext);
@@ -52,102 +61,24 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
   // Add new state for mark absent functionality
   const [markingAbsent, setMarkingAbsent] = useState(false);
 
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const withGovernanceContext = (path: string, params?: Record<string, string | number | boolean>) => {
-    const query = new URLSearchParams();
-    if (governanceContext) query.set("governance_context", governanceContext);
-    Object.entries(params || {}).forEach(([key, value]) => {
-      query.set(key, String(value));
-    });
-    return `${BASE_URL}${path}${query.toString() ? `?${query.toString()}` : ""}`;
-  };
-  const getAuthToken = () =>
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token");
-
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const token = getAuthToken();
-    if (!token) {
-      navigate("/");
-      throw new Error("No authentication token found");
-    }
-
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
-    try {
-      const response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("token");
-        localStorage.removeItem("access_token");
-        navigate("/");
-        throw new Error("Session expired. Please login again.");
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        try {
-          errorData = JSON.parse(errorText);
-          console.error("API Error Response:", errorData);
-
-          if (errorData.detail) {
-            errorMessage =
-              typeof errorData.detail === "string"
-                ? errorData.detail
-                : JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (typeof errorData === "object") {
-            errorMessage = JSON.stringify(errorData);
-          }
-        } catch {
-          console.error("API Error (non-JSON):", errorText);
-          errorMessage = errorText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      return response;
-    } catch (err) {
-      console.error(`Error fetching ${url}:`, err);
-      throw err;
-    }
-  };
-
   // Fetch events on component mount
   useEffect(() => {
-    fetchEvents();
+    void fetchEvents();
   }, []);
 
   // Fetch active attendances when event is selected
   useEffect(() => {
     if (selectedEventId) {
-      fetchActiveAttendances();
+      void fetchActiveAttendances();
     }
   }, [selectedEventId]);
 
   const fetchEvents = async () => {
     try {
-      console.log("Fetching events from:", `${BASE_URL}/events/`);
-      const response = await fetchWithAuth(withGovernanceContext("/events/"));
-      if (!response.ok) {
-        console.error("Failed to fetch events, status:", response.status);
-        const errorText = await response.text();
-        console.error("Error response:", errorText);
-        throw new Error(errorText);
-      }
-      const eventsData = await response.json();
-      console.log("Received events:", eventsData);
+      const eventsData = await fetchAllEvents(
+        false,
+        governanceContext ?? undefined
+      );
       setEvents(eventsData);
     } catch (error) {
       console.error("Error fetching events:", error);
@@ -160,12 +91,10 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
     if (!selectedEventId) return;
 
     try {
-      const response = await fetchWithAuth(
-        withGovernanceContext(`/attendance/events/${selectedEventId}/attendances`, {
-          active_only: true,
-        })
+      const attendancesWithStudents = await fetchActiveEventAttendances(
+        selectedEventId,
+        governanceContext ?? undefined
       );
-      const attendancesWithStudents = await response.json();
 
       // Transform the data to match your frontend interface
       const formattedAttendances = attendancesWithStudents.map((item: EventAttendanceWithStudent) => ({
@@ -201,16 +130,12 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
 
     setLoading(true);
     try {
-      const response = await fetchWithAuth(withGovernanceContext("/attendance/manual"), {
-        method: "POST",
-        body: JSON.stringify({
-          event_id: selectedEventId,
-          student_id: studentId.trim(),
-          notes: notes.trim() || null,
-        }),
+      const payload = await recordManualAttendance({
+        eventId: selectedEventId,
+        studentId: studentId.trim(),
+        notes: notes.trim() || null,
+        governanceContext: governanceContext ?? undefined,
       });
-
-      const payload = await response.json();
       showMessage(
         payload?.action === "time_out"
           ? `Time out recorded successfully for ${studentId}`
@@ -232,20 +157,16 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
 
   const handleTimeOut = async (
     attendanceId: number,
-    studentDisplayId: string
+    studentDisplayId: string | null
   ) => {
     setLoading(true);
     try {
-      const response = await fetchWithAuth(
-        withGovernanceContext(`/attendance/${attendanceId}/time-out`),
-        {
-          method: "POST",
-        }
+      await recordAttendanceTimeOut(
+        attendanceId,
+        governanceContext ?? undefined
       );
-
-      await response.json();
       showMessage(
-        `Time out recorded successfully for ${studentDisplayId}`,
+        `Time out recorded successfully for ${studentDisplayId ?? "the selected student"}`,
         "success"
       );
       fetchActiveAttendances(); // Refresh active attendances
@@ -258,6 +179,9 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
       setLoading(false);
     }
   };
+
+  const formatTime = (timeString: string | null) => formatAttendanceTime(timeString);
+  const formatDate = (timeString: string | null) => formatAttendanceDate(timeString);
 
   // NEW: Handle mark absent functionality
   const handleMarkAbsent = async () => {
@@ -274,18 +198,10 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
 
     setMarkingAbsent(true);
     try {
-      // Fixed: Send event_id as query parameter instead of request body
-      const response = await fetchWithAuth(
-        withGovernanceContext("/attendance/mark-absent-no-timeout", {
-          event_id: selectedEventId,
-        }),
-        {
-          method: "POST",
-          // Remove the body since event_id is now in query params
-        }
+      const result = await markAbsentWithoutTimeOut(
+        selectedEventId,
+        governanceContext ?? undefined
       );
-
-      const result = await response.json();
       showMessage(
         `Successfully marked ${result.updated_count} students as absent`,
         "success"
@@ -301,22 +217,6 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
     } finally {
       setMarkingAbsent(false);
     }
-  };
-
-  const formatTime = (timeString: string) => {
-    return new Date(timeString).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-  };
-
-  const formatDate = (timeString: string) => {
-    return new Date(timeString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
   };
 
   // Get selected event details for display
@@ -472,7 +372,7 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
                   <div key={attendance.id} className="ssg-feature-list-item">
                     <div className="ssg-feature-list-item__meta">
                       <strong>
-                        {attendance.student.student_id} - {attendance.student.name}
+                        {attendance.student.student_id ?? "No student ID"} - {attendance.student.name}
                       </strong>
                       <span>
                         Time In: {formatTime(attendance.time_in)} on {formatDate(attendance.time_in)}
@@ -612,7 +512,7 @@ export const ManualAttendance: React.FC<ManualAttendanceProps> = ({ role }) => {
                     <div className="attendance-info">
                       <div className="student-info">
                         <span className="student-id">
-                          Student: {attendance.student.student_id} -{" "}
+                          Student: {attendance.student.student_id ?? "No student ID"} -{" "}
                           {attendance.student.name}
                         </span>
                         <span className="time-in">

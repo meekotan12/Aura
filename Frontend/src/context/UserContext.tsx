@@ -6,6 +6,7 @@ import {
   normalizeLogoUrl,
   SchoolSettings,
 } from "../api/schoolSettingsApi";
+import { getAuthToken } from "../api/authApi";
 
 interface UserContextType {
   avatar: string | null;
@@ -45,7 +46,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const refreshBranding = useCallback(async () => {
-    const token = localStorage.getItem("authToken") || localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) return;
 
     try {

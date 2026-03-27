@@ -10,7 +10,6 @@ import {
   FaUsers,
 } from "react-icons/fa";
 
-import { buildApiUrl } from "../api/apiUrl";
 import {
   assignGovernanceMember,
   createGovernanceUnit,
@@ -26,6 +25,7 @@ import {
   updateGovernanceMember,
   updateGovernanceUnit,
 } from "../api/governanceHierarchyApi";
+import { fetchAcademicCatalog } from "../api/academicApi";
 import NavbarSG from "../components/NavbarSG";
 import "../css/GovernanceHierarchyManagement.css";
 import "../css/SsgWorkspace.css";
@@ -77,15 +77,6 @@ const emptyMemberDraft: MemberDraftState = {
 };
 
 Modal.setAppElement("#root");
-
-const getAuthHeaders = () => {
-  const token =
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token");
-  if (!token) throw new Error("No authentication token found");
-  return { Authorization: `Bearer ${token}` };
-};
 
 const sortUnits = (units: GovernanceUnitDetail[]) =>
   [...units].sort((left, right) => left.unit_name.localeCompare(right.unit_name));
@@ -154,12 +145,10 @@ const ManageOrg = () => {
   }, [selectedOrg]);
 
   const loadLookup = async () => {
-    const [departmentResponse, programResponse] = await Promise.all([
-      fetch(buildApiUrl("/departments/"), { headers: getAuthHeaders() }),
-      fetch(buildApiUrl("/programs/"), { headers: getAuthHeaders() }),
-    ]);
-    if (departmentResponse.ok) setDepartments((await departmentResponse.json()) as Department[]);
-    if (programResponse.ok) setPrograms((await programResponse.json()) as Program[]);
+    const { departments: nextDepartments, programs: nextPrograms } =
+      await fetchAcademicCatalog();
+    setDepartments(nextDepartments);
+    setPrograms(nextPrograms);
   };
 
   const loadManageOrg = async (preferredOrgId?: number | null) => {

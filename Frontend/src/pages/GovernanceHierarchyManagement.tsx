@@ -21,6 +21,7 @@ import {
   updateGovernanceMember,
   updateGovernanceUnit,
 } from "../api/governanceHierarchyApi";
+import { fetchAcademicCatalog } from "../api/academicApi";
 import { normalizeLogoUrl } from "../api/schoolSettingsApi";
 import NavbarSchoolIT from "../components/NavbarSchoolIT";
 import { useUser } from "../context/UserContext";
@@ -211,28 +212,11 @@ const GovernanceHierarchyManagement = () => {
   const totalMembers = ssgUnit?.members.length ?? 0;
   const activePositions = ssgUnit?.members.filter((member) => member.position_title?.trim()).length ?? 0;
 
-  const getAuthHeaders = () => {
-    const token =
-      localStorage.getItem("authToken") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token");
-    if (!token) throw new Error("No authentication token found");
-    return { Authorization: `Bearer ${token}` };
-  };
-
   const loadAcademicLookup = async () => {
-    const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const [departmentResponse, programResponse] = await Promise.all([
-      fetch(`${baseUrl}/departments/`, { headers: getAuthHeaders() }),
-      fetch(`${baseUrl}/programs/`, { headers: getAuthHeaders() }),
-    ]);
-
-    if (departmentResponse.ok) {
-      setDepartments((await departmentResponse.json()) as Department[]);
-    }
-    if (programResponse.ok) {
-      setPrograms((await programResponse.json()) as Program[]);
-    }
+    const { departments: nextDepartments, programs: nextPrograms } =
+      await fetchAcademicCatalog();
+    setDepartments(nextDepartments);
+    setPrograms(nextPrograms);
   };
 
   const loadSetup = async () => {

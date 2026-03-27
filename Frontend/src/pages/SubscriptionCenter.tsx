@@ -8,30 +8,19 @@ import {
   SubscriptionSettings,
   updateSubscription,
 } from "../api/platformOpsApi";
-import { isCampusAdminRole, normalizeRole } from "../utils/roleUtils";
-
-const getStoredUser = (): { roles: string[]; schoolId?: number | null } => {
-  try {
-    const raw = localStorage.getItem("user");
-    if (!raw) return { roles: [] };
-    const parsed = JSON.parse(raw) as { roles?: string[]; schoolId?: number | null };
-    return {
-      roles: Array.isArray(parsed.roles) ? parsed.roles : [],
-      schoolId: parsed.schoolId ?? null,
-    };
-  } catch {
-    return { roles: [] };
-  }
-};
+import {
+  isStoredCampusAdmin,
+  isStoredPlatformAdmin,
+  readStoredUserSession,
+} from "../lib/auth/storedUser";
 
 const SubscriptionCenter = () => {
-  const stored = getStoredUser();
-  const isSchoolIT = stored.roles.some(isCampusAdminRole);
-  const isPlatformAdmin =
-    stored.roles.some((role) => normalizeRole(role) === "admin") && !stored.schoolId;
+  const stored = readStoredUserSession();
+  const isSchoolIT = isStoredCampusAdmin();
+  const isPlatformAdmin = isStoredPlatformAdmin();
   const NavbarComponent = isSchoolIT ? NavbarSchoolIT : NavbarAdmin;
 
-  const [schoolId, setSchoolId] = useState<string>(stored.schoolId ? String(stored.schoolId) : "");
+  const [schoolId, setSchoolId] = useState<string>(stored?.schoolId ? String(stored.schoolId) : "");
   const [data, setData] = useState<SubscriptionSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

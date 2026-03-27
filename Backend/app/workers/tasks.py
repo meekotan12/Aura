@@ -12,6 +12,7 @@ from app.models.user import User as UserModel
 from app.repositories.import_repository import ImportRepository
 from app.services.email_service import (
     EmailDeliveryError,
+    send_import_onboarding_email,
     send_mfa_code_email,
     send_welcome_email,
 )
@@ -33,9 +34,6 @@ def _process_student_import_job(job_id: str) -> None:
 
 process_student_import_job = celery_app.task(
     name="app.workers.tasks.process_student_import_job",
-)(_process_student_import_job)
-legacy_process_student_import_job = celery_app.task(
-    name="app.worker.tasks.process_student_import_job",
 )(_process_student_import_job)
 
 
@@ -62,9 +60,6 @@ def _sync_event_workflow_statuses() -> dict[str, int]:
 
 sync_event_workflow_statuses = celery_app.task(
     name="app.workers.tasks.sync_event_workflow_statuses",
-)(_sync_event_workflow_statuses)
-legacy_sync_event_workflow_statuses = celery_app.task(
-    name="app.worker.tasks.sync_event_workflow_statuses",
 )(_sync_event_workflow_statuses)
 
 
@@ -107,6 +102,43 @@ def _send_student_welcome_email(
         raise
 
 
+def _send_student_import_onboarding_email(
+    self,
+    job_id: str,
+    user_id: int,
+    email: str,
+    first_name: str | None = None,
+) -> None:
+    try:
+        send_import_onboarding_email(
+            recipient_email=email,
+            first_name=first_name,
+        )
+        with SessionLocal() as db:
+            repo = ImportRepository(db)
+            repo.log_email_delivery(
+                job_id=job_id,
+                user_id=user_id,
+                email=email,
+                status="sent",
+                retry_count=self.request.retries,
+            )
+            db.commit()
+    except Exception as exc:
+        with SessionLocal() as db:
+            repo = ImportRepository(db)
+            repo.log_email_delivery(
+                job_id=job_id,
+                user_id=user_id,
+                email=email,
+                status="failed",
+                error_message=str(exc),
+                retry_count=self.request.retries,
+            )
+            db.commit()
+        raise
+
+
 send_student_welcome_email = celery_app.task(
     bind=True,
     name="app.workers.tasks.send_student_welcome_email",
@@ -115,14 +147,15 @@ send_student_welcome_email = celery_app.task(
     retry_jitter=True,
     retry_kwargs={"max_retries": 5},
 )(_send_student_welcome_email)
-legacy_send_student_welcome_email = celery_app.task(
+
+send_student_import_onboarding_email = celery_app.task(
     bind=True,
-    name="app.worker.tasks.send_student_welcome_email",
+    name="app.workers.tasks.send_student_import_onboarding_email",
     autoretry_for=(EmailDeliveryError,),
     retry_backoff=True,
     retry_jitter=True,
     retry_kwargs={"max_retries": 5},
-)(_send_student_welcome_email)
+)(_send_student_import_onboarding_email)
 
 
 def _send_login_mfa_code_email(
@@ -143,14 +176,6 @@ def _send_login_mfa_code_email(
 send_login_mfa_code_email = celery_app.task(
     bind=True,
     name="app.workers.tasks.send_login_mfa_code_email",
-    autoretry_for=(EmailDeliveryError,),
-    retry_backoff=True,
-    retry_jitter=True,
-    retry_kwargs={"max_retries": 5},
-)(_send_login_mfa_code_email)
-legacy_send_login_mfa_code_email = celery_app.task(
-    bind=True,
-    name="app.worker.tasks.send_login_mfa_code_email",
     autoretry_for=(EmailDeliveryError,),
     retry_backoff=True,
     retry_jitter=True,
@@ -189,15 +214,13 @@ def _send_login_security_notification(
 send_login_security_notification = celery_app.task(
     name="app.workers.tasks.send_login_security_notification",
 )(_send_login_security_notification)
-legacy_send_login_security_notification = celery_app.task(
-    name="app.worker.tasks.send_login_security_notification",
-)(_send_login_security_notification)
 
 
 __all__ = [
     "process_student_import_job",
     "send_login_mfa_code_email",
     "send_login_security_notification",
+    "send_student_import_onboarding_email",
     "send_student_welcome_email",
     "sync_event_workflow_statuses",
 ]

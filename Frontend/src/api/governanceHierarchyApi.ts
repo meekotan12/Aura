@@ -1,14 +1,8 @@
 import { buildApiUrl } from "./apiUrl";
-
-const getAuthToken = () =>
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token");
+import { buildAuthHeaders } from "../lib/api/client";
 
 const withAuthHeaders = () => {
-  const token = getAuthToken();
-  if (!token) throw new Error("No authentication token found");
-  return { Authorization: `Bearer ${token}` };
+  return buildAuthHeaders();
 };
 
 const parseError = async (response: Response, fallback: string): Promise<string> => {
