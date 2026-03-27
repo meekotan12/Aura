@@ -8,6 +8,10 @@ logo_dir="${SCHOOL_LOGO_STORAGE_DIR:-/tmp/valid8_school_logos}"
 case "$mode" in
   web)
     mkdir -p "$import_dir" "$logo_dir"
+    echo "Running database migrations..."
+    alembic upgrade head
+    echo "Seeding database..."
+    python -m app.seeder || true
     exec uvicorn app.main:app \
       --host 0.0.0.0 \
       --port "${PORT:-8000}" \
