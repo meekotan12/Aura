@@ -12,12 +12,15 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
 COPY . .
+
+RUN find /app/scripts -name "*.sh" -exec dos2unix {} \; && chmod +x /app/scripts/*.sh
 
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 
