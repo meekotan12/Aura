@@ -46,16 +46,28 @@
 
         <!-- Location card -->
         <div class="location-card">
-          <div class="geo-columns">
-            <div class="geo-block">
-              <span class="geo-label">Latitude</span>
-              <span class="geo-value">{{ latitudeText }}</span>
-              <span class="geo-label geo-label--spaced">Longitude</span>
-              <span class="geo-value">{{ longitudeText }}</span>
+          <div class="location-card__content">
+            <div class="geo-columns">
+              <div class="geo-block">
+                <span class="geo-label">Latitude</span>
+                <span class="geo-value">{{ latitudeText }}</span>
+                <span class="geo-label geo-label--spaced">Longitude</span>
+                <span class="geo-value">{{ longitudeText }}</span>
+              </div>
+              <div class="geo-block geo-block--location">
+                <span class="geo-label">Location</span>
+                <span class="geo-location">{{ event.location }}</span>
+              </div>
             </div>
-            <div class="geo-block geo-block--location">
-              <span class="geo-label">Location</span>
-              <span class="geo-location">{{ event.location }}</span>
+
+            <div v-if="geoMetricPills.length" class="geo-metrics">
+              <span
+                v-for="item in geoMetricPills"
+                :key="item"
+                class="geo-metric-pill"
+              >
+                {{ item }}
+              </span>
             </div>
           </div>
 
@@ -92,6 +104,7 @@ import { usePreviewTheme } from '@/composables/usePreviewTheme.js'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { studentDashboardPreviewData } from '@/data/studentDashboardPreview.js'
 import { schoolItPreviewData } from '@/data/schoolItPreview.js'
+import { hasNavigableHistory, resolveBackFallbackLocation } from '@/services/routeWorkspace.js'
 
 const props = defineProps({
   preview: {
@@ -122,7 +135,12 @@ onMounted(() => {
 })
 
 function goBack() {
-  router.back()
+  if (hasNavigableHistory(route)) {
+    router.back()
+    return
+  }
+
+  router.push(resolveBackFallbackLocation(route, { eventId: eventId.value }))
 }
 
 const statusConfig = {
@@ -160,6 +178,22 @@ const latitudeText = computed(() => {
 const longitudeText = computed(() => {
   if (!hasGeo.value) return '--'
   return new Intl.NumberFormat('en-PH', { maximumFractionDigits: 6 }).format(event.value.geo_longitude)
+})
+
+const geoMetricPills = computed(() => {
+  const pills = []
+  const radius = Number(event.value?.geo_radius_m)
+  const maxAccuracy = Number(event.value?.geo_max_accuracy_m)
+
+  if (Number.isFinite(radius) && radius > 0) {
+    pills.push(`Radius ${Math.round(radius)}m`)
+  }
+
+  if (Number.isFinite(maxAccuracy) && maxAccuracy > 0) {
+    pills.push(`Max GPS Accuracy ${Math.round(maxAccuracy)}m`)
+  }
+
+  return pills
 })
 
 const mapUrl = computed(() => {
@@ -379,6 +413,14 @@ function openInMaps() {
   gap: 14px;
 }
 
+.location-card__content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
 .geo-columns {
   display: grid;
   grid-template-columns: 96px 1fr;
@@ -419,6 +461,25 @@ function openInMaps() {
   line-height: 1.2;
   color: var(--color-banner-text);
   max-width: 190px;
+}
+
+.geo-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.geo-metric-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--color-banner-text);
 }
 
 .geo-action {

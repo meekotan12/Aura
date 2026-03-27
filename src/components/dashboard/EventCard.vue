@@ -2,6 +2,11 @@
   <div 
     class="event-card group" 
     :class="cardClasses"
+    role="button"
+    tabindex="0"
+    @click="emitOpenDetail"
+    @keydown.enter.prevent="emitOpenDetail"
+    @keydown.space.prevent="emitOpenDetail"
   >
     <!-- Top Right Status -->
     <div class="event-card__status">
@@ -17,7 +22,7 @@
 
     <!-- Action Button -->
     <div class="event-action-row">
-      <button class="event-action" :class="actionBtnClass" type="button" @click="emitClick">
+      <button class="event-action" :class="actionBtnClass" type="button" :disabled="isActionDisabled" @click.stop="emitClick">
         <div class="action-icon">
           <ArrowRight :size="16" />
         </div>
@@ -78,6 +83,16 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { ArrowRight, Check, Clock3, Minus, X } from 'lucide-vue-next'
+import {
+  formatCompactDuration,
+  hasSignedInAttendance,
+  hasSignedOutAttendance,
+  resolveAttendanceDisplayStatus,
+  resolveEventTimeStatusMoment,
+  resolveEventLifecycleStatus,
+  resolveAttendanceActionState,
+  resolveSignOutOpenDate,
+} from '@/services/attendanceFlow.js'
 
 const props = defineProps({
   event: {
@@ -89,6 +104,10 @@ const props = defineProps({
     default: false,
   },
   attendanceRecord: {
+    type: Object,
+    default: null,
+  },
+  eventTimeStatus: {
     type: Object,
     default: null,
   },
@@ -130,21 +149,41 @@ const STATUS_CONFIG = {
 }
 
 const normalizedStatus = computed(() => {
-  // Backwards compatibility if legacy "done" still appears
-  return props.event.status === 'done' ? 'completed' : props.event.status
+  return resolveEventLifecycleStatus(props.event, props.eventTimeStatus) || 'upcoming'
 })
 
 const statusConfig = computed(() => STATUS_CONFIG[normalizedStatus.value] ?? STATUS_CONFIG.upcoming)
+const actionState = computed(() => resolveAttendanceActionState({
+  event: props.event,
+  eventStatus: normalizedStatus.value,
+  attendanceRecord: props.attendanceRecord,
+  timeStatus: props.eventTimeStatus,
+  now: new Date(effectiveNowMs.value),
+}))
+const opensAttendanceFlow = computed(() => ['sign-in', 'sign-out'].includes(actionState.value))
+const isWaitingSignOut = computed(() => actionState.value === 'waiting-sign-out')
+const isSignOutReady = computed(() => actionState.value === 'sign-out')
+const isActionDisabled = computed(() => isWaitingSignOut.value)
 
 const statusText = computed(() => statusConfig.value.label)
 const actionText = computed(() => {
-  if (normalizedStatus.value === 'ongoing' && props.isAttended) return 'View Event'
-  return statusConfig.value.actionText
+  if (isWaitingSignOut.value) {
+    return 'Waiting for Sign Out'
+  }
+  if (isSignOutReady.value) {
+    return 'Sign Out'
+  }
+  if (actionState.value === 'sign-in') {
+    return 'Attendance Now'
+  }
+  return 'View Event'
 })
 const cardClasses = computed(() => statusConfig.value.cardClass)
 const statusDotClass = computed(() => statusConfig.value.dotClass)
 const actionBtnClass = computed(() => {
-  if (normalizedStatus.value === 'ongoing' && props.isAttended) return 'action-btn--white'
+  if (!opensAttendanceFlow.value || isWaitingSignOut.value || isSignOutReady.value) {
+    return 'action-btn--white'
+  }
   return statusConfig.value.actionBtnClass
 })
 
@@ -152,14 +191,39 @@ const eventMeta = computed(() => props.event.location ?? '')
 
 const isOngoing = computed(() => normalizedStatus.value === 'ongoing')
 const normalizedAttendanceStatus = computed(() => {
-  const raw = String(props.attendanceRecord?.status ?? '').trim().toLowerCase()
+  const raw = resolveAttendanceDisplayStatus(props.attendanceRecord)
   return raw || null
 })
+const hasSignedIn = computed(() => hasSignedInAttendance(props.attendanceRecord))
+const hasSignedOut = computed(() => hasSignedOutAttendance(props.attendanceRecord))
 
 const attendanceAppearance = computed(() => {
   const sharedMeta = isOngoing.value
     ? 'Tap to see your attendance state for this event.'
     : 'Attendance state loaded from your backend record.'
+
+  if (hasSignedIn.value && !hasSignedOut.value) {
+    return {
+      label:
+        actionState.value === 'closed'
+          ? 'Attendance Closed'
+          : isSignOutReady.value
+            ? 'Ready for Sign Out'
+            : 'Waiting for Sign Out',
+      icon: Clock3,
+      tone: 'neutral',
+      cardClass: 'attendance-status-card--neutral',
+      meta:
+        actionState.value === 'closed'
+          ? 'The sign-out window is already closed for this event.'
+          : isSignOutReady.value
+            ? 'The backend sign-out window is open for this event.'
+            : waitingSignOutCountdown.value
+              ? `Your sign-in is saved. Sign-out opens in ${waitingSignOutCountdown.value}.`
+              : 'Your sign-in is saved. Waiting for the backend sign-out window.',
+      isUnmarked: false,
+    }
+  }
 
   if (normalizedAttendanceStatus.value === 'present') {
     return {
@@ -209,6 +273,54 @@ const showDesktopAttendanceText = computed(() => !isMobile.value && !attendanceA
 const isMobile = ref(false)
 const isAttendanceOpen = ref(false)
 const isAttendanceHovered = ref(false)
+const countdownTickMs = ref(Date.now())
+const timeStatusObservedAtMs = ref(Date.now())
+let countdownIntervalId = null
+
+const timeStatusCurrentTimeMs = computed(() => {
+  const parsed = resolveEventTimeStatusMoment(props.eventTimeStatus?.current_time)
+  return parsed ? parsed.getTime() : null
+})
+
+const effectiveNowMs = computed(() => {
+  if (Number.isFinite(timeStatusCurrentTimeMs.value)) {
+    return timeStatusCurrentTimeMs.value + Math.max(0, countdownTickMs.value - timeStatusObservedAtMs.value)
+  }
+  return countdownTickMs.value
+})
+
+const signOutOpenAtMs = computed(() => {
+  const signOutOpenAt = resolveSignOutOpenDate(props.event, props.eventTimeStatus)
+  return signOutOpenAt ? signOutOpenAt.getTime() : null
+})
+
+const waitingSignOutCountdown = computed(() => {
+  if (!isWaitingSignOut.value || !Number.isFinite(signOutOpenAtMs.value)) {
+    return ''
+  }
+
+  const diffMs = signOutOpenAtMs.value - effectiveNowMs.value
+  if (!Number.isFinite(diffMs) || diffMs <= 0) {
+    return 'less than 1 min'
+  }
+
+  return formatCompactDuration(diffMs)
+})
+
+function stopCountdownTimer() {
+  if (countdownIntervalId != null) {
+    clearInterval(countdownIntervalId)
+    countdownIntervalId = null
+  }
+}
+
+function startCountdownTimer() {
+  stopCountdownTimer()
+  countdownTickMs.value = Date.now()
+  countdownIntervalId = window.setInterval(() => {
+    countdownTickMs.value = Date.now()
+  }, 30_000)
+}
 
 function updateMedia() {
   isMobile.value = window.matchMedia('(max-width: 767px)').matches
@@ -224,7 +336,10 @@ function emitOpenDetail() {
 }
 
 function emitClick() {
-  if (isOngoing.value && props.isAttended) {
+  if (isActionDisabled.value) {
+    return
+  }
+  if (!opensAttendanceFlow.value) {
     emitOpenDetail()
     return
   }
@@ -237,6 +352,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopCountdownTimer()
   window.removeEventListener('resize', updateMedia)
 })
 
@@ -245,6 +361,27 @@ watch(isMobile, (next) => {
     isAttendanceOpen.value = false
   }
 })
+
+watch(
+  () => props.eventTimeStatus,
+  () => {
+    timeStatusObservedAtMs.value = Date.now()
+    countdownTickMs.value = Date.now()
+  },
+  { immediate: true, deep: true }
+)
+
+watch(
+  isWaitingSignOut,
+  (waiting) => {
+    if (waiting) {
+      startCountdownTimer()
+      return
+    }
+    stopCountdownTimer()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -259,10 +396,16 @@ watch(isMobile, (next) => {
   min-height: 200px;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   overflow: hidden;
+  cursor: pointer;
 }
 
 .event-card:active {
   transform: scale(0.98);
+}
+
+.event-card:focus-visible {
+  outline: 3px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 3px;
 }
 
 /* ── Card Color Variants ── */
@@ -343,6 +486,11 @@ watch(isMobile, (next) => {
   transition: transform 0.15s ease;
 }
 
+.event-action:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .event-action-row {
   display: flex;
   align-items: center;
@@ -352,6 +500,10 @@ watch(isMobile, (next) => {
 
 .event-action:active {
   transform: scale(0.95);
+}
+
+.event-action:disabled:active {
+  transform: none;
 }
 
 .action-btn--white { background: var(--color-surface); }

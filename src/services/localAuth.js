@@ -3,6 +3,19 @@ import { resolveBackendMediaUrl } from '@/services/backendMedia.js'
 const AUTH_META_KEY = 'aura_auth_meta'
 export const AUTH_META_CHANGED_EVENT = 'aura-auth-meta-changed'
 
+/**
+ * Sanitize a token string: trim whitespace, reject obvious non-JWT values.
+ */
+export function sanitizeToken(token) {
+    const trimmed = String(token || '').trim()
+    if (!trimmed) return ''
+    // Basic JWT format check: three dot-separated base64 segments
+    if (trimmed.split('.').length === 3) return trimmed
+    // If it doesn't look like a JWT, still accept it (some APIs use opaque tokens)
+    // but strip any embedded HTML/script tags as a safety measure
+    return trimmed.replace(/<[^>]*>/g, '')
+}
+
 function notifyAuthMetaChanged() {
     if (typeof window === 'undefined') return
     window.dispatchEvent(new CustomEvent(AUTH_META_CHANGED_EVENT))

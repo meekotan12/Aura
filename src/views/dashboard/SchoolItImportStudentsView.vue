@@ -31,7 +31,7 @@
             class="school-it-import__info-note dashboard-enter dashboard-enter--3"
           >
             <p style="margin: 0; margin-bottom: 12px;">
-              Upload a <strong>.xlsx</strong> file using the backend template columns:
+              Upload a <strong>.xlsx</strong> or <strong>.csv</strong> file using the backend template columns:
               Student_ID, Email, Last Name, First Name, Middle Name, Department, and Course.
             </p>
             <button class="school-it-import__download-template" type="button" @click="downloadTemplate">
@@ -64,7 +64,7 @@
 
                 <div class="school-it-import__dropzone-copy">
                   <p class="school-it-import__dropzone-title">Click to upload or drag and drop.</p>
-                  <p class="school-it-import__dropzone-caption">Supported format: XLSX</p>
+                  <p class="school-it-import__dropzone-caption">Supported format: XLSX or CSV</p>
                   <p v-if="selectedFile" class="school-it-import__dropzone-file">{{ selectedFile.name }}</p>
                 </div>
               </button>
@@ -119,6 +119,59 @@
                 {{ feedbackMessage }}
               </p>
 
+              <div
+                v-if="showImportSuccessMessage"
+                class="school-it-import__success-banner"
+              >
+                <p class="school-it-import__success-title">Import completed successfully</p>
+                <p class="school-it-import__success-copy">{{ importSuccessMessage }}</p>
+              </div>
+
+              <div
+                v-if="showPreviewRepairActions || showImportErrorDownload"
+                class="school-it-import__result-actions"
+              >
+                <button
+                  v-if="showPreviewRepairActions"
+                  class="school-it-import__secondary-action"
+                  type="button"
+                  :disabled="stage === 'processing'"
+                  @click="handleDownloadPreviewErrors"
+                >
+                  Download Errors
+                </button>
+
+                <button
+                  v-if="showPreviewRepairActions"
+                  class="school-it-import__secondary-action"
+                  type="button"
+                  :disabled="stage === 'processing'"
+                  @click="handleDownloadPreviewRetryFile"
+                >
+                  Retry File
+                </button>
+
+                <button
+                  v-if="showPreviewRepairActions && canKeepValidRows"
+                  class="school-it-import__secondary-action school-it-import__secondary-action--primary"
+                  type="button"
+                  :disabled="stage === 'processing'"
+                  @click="handleKeepValidRows"
+                >
+                  Keep Valid Rows
+                </button>
+
+                <button
+                  v-if="showImportErrorDownload"
+                  class="school-it-import__secondary-action"
+                  type="button"
+                  :disabled="stage === 'processing'"
+                  @click="handleDownloadImportErrors"
+                >
+                  Download Failed Rows
+                </button>
+              </div>
+
               <div v-if="displayRows.length" class="school-it-import__results-list">
                 <article
                   v-for="row in displayRows"
@@ -159,7 +212,7 @@
             ref="fileInputEl"
             class="school-it-import__file-input"
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.csv"
             @change="handleFileSelect"
           >
         </section>
@@ -209,8 +262,13 @@ import { usePreviewTheme } from '@/composables/usePreviewTheme.js'
 import { schoolItPreviewData } from '@/data/schoolItPreview.js'
 import {
   BackendApiError,
+  downloadImportErrors,
+  downloadPreviewImportErrors,
+  downloadPreviewRetryFile,
+  downloadStudentImportTemplate,
   getStudentImportStatus,
   previewImportStudents,
+  removeInvalidPreviewRows,
   startStudentImport,
 } from '@/services/backendApi.js'
 import {
@@ -265,9 +323,41 @@ const initials = computed(() => buildInitials(displayName.value))
 const avatarUrl = computed(() => activeUser.value?.avatar_url || '')
 const validPreviewRows = computed(() => displayRows.value.filter((row) => row.status === 'valid').length)
 const invalidPreviewRows = computed(() => displayRows.value.filter((row) => row.status !== 'valid').length)
+const canKeepValidRows = computed(() => validPreviewRows.value > 0 && invalidPreviewRows.value > 0 && Boolean(previewSummary.value?.preview_token))
+const showPreviewRepairActions = computed(() =>
+  stage.value === 'result'
+  && !importSummary.value
+  && Boolean(previewSummary.value?.preview_token)
+  && invalidPreviewRows.value > 0
+)
+const showImportErrorDownload = computed(() =>
+  stage.value === 'result'
+  && Boolean(importSummary.value?.failed_count)
+  && Boolean(importSummary.value?.job_id)
+)
+const showImportSuccessMessage = computed(() =>
+  stage.value === 'result' && importSummary.value?.state === 'completed'
+)
+const importSuccessMessage = computed(() => {
+  if (!showImportSuccessMessage.value) return ''
+
+  const successCount = Number(importSummary.value?.success_count || 0)
+  const failedCount = Number(importSummary.value?.failed_count || 0)
+
+  if (failedCount > 0) {
+    return `${successCount} student accounts were imported. ${failedCount} rows still need review.`
+  }
+
+  if (successCount === 1) {
+    return '1 student account was added to the database.'
+  }
+
+  return `${successCount} student accounts were added to the database.`
+})
 const primaryActionLabel = computed(() => {
   if (stage.value === 'processing') return 'Processing...'
   if (stage.value === 'result' && importSummary.value?.state === 'completed') return 'Import Another'
+  if (stage.value === 'result' && importSummary.value?.state === 'failed') return 'Try Another File'
   if (stage.value === 'result' && previewSummary.value && !previewSummary.value.can_commit) return 'Fix Errors to Import'
   return 'Slide to Import'
 })
@@ -279,11 +369,15 @@ const isPrimaryActionDisabled = computed(() => {
 })
 const resultTitle = computed(() => {
   if (importSummary.value?.state === 'completed') return 'Imported Students'
+  if (importSummary.value?.state === 'failed') return 'Import Results'
   return 'Import Preview'
 })
 const resultSummary = computed(() => {
   if (importSummary.value?.state === 'completed') {
     return `${importSummary.value.success_count} imported, ${importSummary.value.failed_count} failed`
+  }
+  if (importSummary.value?.state === 'failed') {
+    return `${importSummary.value.success_count} imported, ${importSummary.value.failed_count} failed during this job`
   }
   if (previewSummary.value) {
     return `${validPreviewRows.value} ready, ${invalidPreviewRows.value} flagged from ${previewSummary.value.filename || 'selected file'}`
@@ -367,10 +461,10 @@ function commitSelectedFile(file) {
   }
 
   const normalizedName = String(file.name || '').toLowerCase()
-  if (!normalizedName.endsWith('.xlsx')) {
+  if (!normalizedName.endsWith('.xlsx') && !normalizedName.endsWith('.csv')) {
     selectedFile.value = null
     feedbackError.value = true
-    feedbackMessage.value = 'Only .xlsx files are allowed.'
+    feedbackMessage.value = 'Only .xlsx and .csv files are allowed.'
     return
   }
 
@@ -437,7 +531,7 @@ async function handlePrimaryAction() {
 
   if (!selectedFile.value) {
     feedbackError.value = true
-    feedbackMessage.value = 'Choose an Excel (.xlsx) file first.'
+    feedbackMessage.value = 'Choose a CSV or Excel file first.'
     return
   }
 
@@ -486,6 +580,12 @@ async function runPreviewFlow() {
 
 async function runImportFlow() {
   if (!previewSummary.value || !previewSummary.value.can_commit) return
+  if (!previewSummary.value.preview_token) {
+    feedbackError.value = true
+    feedbackMessage.value = 'Preview token is missing. Preview the file again before importing.'
+    stage.value = 'result'
+    return
+  }
 
   stage.value = 'processing'
   feedbackMessage.value = ''
@@ -499,7 +599,7 @@ async function runImportFlow() {
     if (props.preview) {
       await runMockImport(previewSummary.value)
     } else {
-      const job = await startStudentImport(apiBaseUrl.value, token.value, selectedFile.value)
+      const job = await startStudentImport(apiBaseUrl.value, token.value, previewSummary.value.preview_token)
       await pollImportJob(job.job_id)
     }
 
@@ -515,24 +615,103 @@ async function runImportFlow() {
       feedbackError.value = false
     }
   } catch (error) {
-    stage.value = 'idle'
-    displayProgress.value = 0
+    stage.value = 'result'
+    displayProgress.value = importSummary.value?.percentage_completed
+      ? Number(importSummary.value.percentage_completed)
+      : (previewSummary.value?.can_commit ? 100 : 0)
     feedbackError.value = true
     feedbackMessage.value = resolveImportErrorMessage(error)
   }
 }
 
-function downloadTemplate() {
-  const headers = 'Student_ID,Email,Last Name,First Name,Middle Name,Department,Course\n'
-  const blob = new Blob([headers], { type: 'text/csv;charset=utf-8;' })
+function triggerBlobDownload(blob, fileName) {
   const link = document.createElement('a')
   const url = URL.createObjectURL(blob)
   link.setAttribute('href', url)
-  link.setAttribute('download', 'aura_student_import_template.csv')
+  link.setAttribute('download', fileName)
   link.style.visibility = 'hidden'
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
+}
+
+async function downloadTemplate() {
+  if (props.preview) {
+    const headers = 'Student_ID,Email,Last Name,First Name,Middle Name,Department,Course\n'
+    const blob = new Blob([headers], { type: 'text/csv;charset=utf-8;' })
+    triggerBlobDownload(blob, 'student_import_template.csv')
+    return
+  }
+
+  try {
+    const blob = await downloadStudentImportTemplate(apiBaseUrl.value, token.value)
+    triggerBlobDownload(blob, 'student_import_template.xlsx')
+  } catch (error) {
+    feedbackError.value = true
+    feedbackMessage.value = resolveImportErrorMessage(error)
+  }
+}
+
+async function handleDownloadPreviewErrors() {
+  if (props.preview || !previewSummary.value?.preview_token) return
+
+  try {
+    const blob = await downloadPreviewImportErrors(apiBaseUrl.value, token.value, previewSummary.value.preview_token)
+    triggerBlobDownload(blob, `preview_errors_${previewSummary.value.preview_token}.xlsx`)
+  } catch (error) {
+    feedbackError.value = true
+    feedbackMessage.value = resolveImportErrorMessage(error)
+  }
+}
+
+async function handleDownloadPreviewRetryFile() {
+  if (props.preview || !previewSummary.value?.preview_token) return
+
+  try {
+    const blob = await downloadPreviewRetryFile(apiBaseUrl.value, token.value, previewSummary.value.preview_token)
+    triggerBlobDownload(blob, `preview_retry_${previewSummary.value.preview_token}.xlsx`)
+  } catch (error) {
+    feedbackError.value = true
+    feedbackMessage.value = resolveImportErrorMessage(error)
+  }
+}
+
+async function handleKeepValidRows() {
+  if (props.preview || !previewSummary.value?.preview_token || !canKeepValidRows.value) return
+
+  stage.value = 'processing'
+  feedbackMessage.value = ''
+  feedbackError.value = false
+  processingLabel.value = 'Keeping valid rows from preview...'
+  smoothProgressTo(56, 360)
+
+  try {
+    const cleanedPreview = await removeInvalidPreviewRows(apiBaseUrl.value, token.value, previewSummary.value.preview_token)
+    previewSummary.value = cleanedPreview
+    displayRows.value = extractStudentImportDisplayRows(cleanedPreview)
+    smoothProgressTo(100, 220)
+    await wait(260)
+    stage.value = 'result'
+    feedbackError.value = false
+    feedbackMessage.value = 'Invalid rows were removed. The remaining rows are ready to import.'
+  } catch (error) {
+    stage.value = 'result'
+    feedbackError.value = true
+    feedbackMessage.value = resolveImportErrorMessage(error)
+  }
+}
+
+async function handleDownloadImportErrors() {
+  if (props.preview || !importSummary.value?.job_id) return
+
+  try {
+    const blob = await downloadImportErrors(apiBaseUrl.value, token.value, importSummary.value.job_id)
+    triggerBlobDownload(blob, `import_${importSummary.value.job_id}_failed_rows.xlsx`)
+  } catch (error) {
+    feedbackError.value = true
+    feedbackMessage.value = resolveImportErrorMessage(error)
+  }
 }
 
 async function runMockPreview(file) {
@@ -638,6 +817,8 @@ function wait(ms) {
 function resetFlow() {
   stopProgressAnimation()
   clearPollTimer()
+  selectedFile.value = null
+  if (fileInputEl.value) fileInputEl.value.value = ''
   stage.value = 'idle'
   processingLabel.value = 'Uploading Please Wait'
   displayProgress.value = 0
@@ -656,7 +837,7 @@ function resolveImportErrorMessage(error) {
   }
 
   if (error.status === 400) {
-    return error.message || 'Only .xlsx files are allowed.'
+    return error.message || 'Only .xlsx and .csv files are allowed.'
   }
 
   if (error.status === 403) {
@@ -719,6 +900,14 @@ async function handleLogout() {
 .school-it-import__result-reset{min-height:38px;padding:0 14px;border:none;border-radius:999px;background:color-mix(in srgb,var(--color-surface) 84%, var(--color-bg));color:var(--color-text-primary);font-size:12px;font-weight:700;white-space:nowrap}
 .school-it-import__feedback{padding:0 2px;font-size:13px;font-weight:600;line-height:1.4;color:#15803D}
 .school-it-import__feedback--error{color:#D92D20}
+.school-it-import__success-banner{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:22px;background:color-mix(in srgb,var(--color-primary) 14%, white);border:1px solid color-mix(in srgb,var(--color-primary) 24%, transparent)}
+.school-it-import__success-title,.school-it-import__success-copy{margin:0}
+.school-it-import__success-title{font-size:13px;font-weight:800;line-height:1.2;color:var(--color-text-primary)}
+.school-it-import__success-copy{font-size:12px;font-weight:600;line-height:1.45;color:var(--color-text-secondary)}
+.school-it-import__result-actions{display:flex;flex-wrap:wrap;gap:10px}
+.school-it-import__secondary-action{min-height:36px;padding:0 14px;border:none;border-radius:999px;background:color-mix(in srgb,var(--color-surface) 82%, var(--color-bg));color:var(--color-text-primary);font-size:12px;font-weight:700}
+.school-it-import__secondary-action--primary{background:color-mix(in srgb,var(--color-primary) 18%, white);color:var(--color-text-primary)}
+.school-it-import__secondary-action:disabled{opacity:.62;cursor:not-allowed}
 .school-it-import__results-list{display:flex;flex-direction:column;gap:12px;max-height:360px;overflow:auto;padding-right:2px}
 .school-it-import__result-row{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:24px;background:color-mix(in srgb,var(--color-surface) 88%, var(--color-bg))}
 .school-it-import__result-row--invalid{background:color-mix(in srgb,var(--color-surface) 76%, #FDE8E8)}

@@ -158,6 +158,14 @@ export function normalizeEvent(event = {}) {
         geo_latitude: typeof event.geo_latitude === 'number' ? event.geo_latitude : toOptionalNumber(event.geo_latitude, null),
         geo_longitude: typeof event.geo_longitude === 'number' ? event.geo_longitude : toOptionalNumber(event.geo_longitude, null),
         geo_radius_m: toOptionalNumber(event.geo_radius_m, null),
+        geo_max_accuracy_m: toOptionalNumber(event.geo_max_accuracy_m, null),
+        early_check_in_minutes: toOptionalNumber(event.early_check_in_minutes, 0),
+        late_threshold_minutes: toOptionalNumber(event.late_threshold_minutes, 0),
+        sign_out_grace_minutes: toOptionalNumber(event.sign_out_grace_minutes, 0),
+        sign_out_open_delay_minutes: toOptionalNumber(event.sign_out_open_delay_minutes, 0),
+        sign_out_override_until: toOptionalString(event.sign_out_override_until, null),
+        present_until_override_at: toOptionalString(event.present_until_override_at, null),
+        late_until_override_at: toOptionalString(event.late_until_override_at, null),
     }
 }
 
@@ -166,13 +174,70 @@ export function normalizeAttendanceRecord(attendance = {}) {
         ...attendance,
         id: toOptionalNumber(attendance.id, 0),
         event_id: toOptionalNumber(attendance.event_id, 0),
+        event_name: toOptionalString(attendance.event_name, null),
         student_id: toIntegerOrOriginal(attendance.student_id, null),
         method: toOptionalString(attendance.method, 'manual'),
         status: toOptionalString(attendance.status, 'present'),
+        display_status: toOptionalString(attendance.display_status, null),
         notes: toOptionalString(attendance.notes, null),
         time_in: toOptionalString(attendance.time_in, null),
         time_out: toOptionalString(attendance.time_out, null),
+        completion_state: toOptionalString(attendance.completion_state, null),
+        check_in_status: toOptionalString(attendance.check_in_status, null),
+        check_out_status: toOptionalString(attendance.check_out_status, null),
+        duration_minutes: toOptionalNumber(attendance.duration_minutes, null),
+        is_valid_attendance: typeof attendance.is_valid_attendance === 'boolean'
+            ? attendance.is_valid_attendance
+            : null,
         verified_by: toOptionalNumber(attendance.verified_by, null),
+    }
+}
+
+export function normalizeEventAttendanceWithStudent(payload = {}) {
+    const attendance = normalizeAttendanceRecord(payload.attendance ?? payload)
+
+    return {
+        ...payload,
+        attendance,
+        student_id: toOptionalString(payload.student_id, null),
+        student_name: toOptionalString(payload.student_name, 'Unknown Student'),
+    }
+}
+
+export function normalizeEventAttendanceReport(payload = {}) {
+    const normalizedPrograms = Array.isArray(payload.programs)
+        ? payload.programs.map((program) => ({
+            id: toOptionalNumber(program?.id, 0),
+            name: toOptionalString(program?.name, 'Unknown Program'),
+        }))
+        : []
+
+    const normalizedProgramBreakdown = Array.isArray(payload.program_breakdown)
+        ? payload.program_breakdown.map((item) => ({
+            program: toOptionalString(item?.program, 'Unknown Program'),
+            total: toOptionalNumber(item?.total, 0),
+            present: toOptionalNumber(item?.present, 0),
+            late: toOptionalNumber(item?.late, 0),
+            incomplete: toOptionalNumber(item?.incomplete, 0),
+            absent: toOptionalNumber(item?.absent, 0),
+        }))
+        : []
+
+    return {
+        ...payload,
+        event_name: toOptionalString(payload.event_name, 'Untitled Event'),
+        event_date: toOptionalString(payload.event_date, null),
+        event_location: toOptionalString(payload.event_location, 'N/A'),
+        total_participants: toOptionalNumber(payload.total_participants, 0),
+        attendees: toOptionalNumber(payload.attendees, 0),
+        late_attendees: toOptionalNumber(payload.late_attendees, 0),
+        incomplete_attendees: toOptionalNumber(payload.incomplete_attendees, 0),
+        absentees: toOptionalNumber(payload.absentees, 0),
+        attendance_rate: typeof payload.attendance_rate === 'number'
+            ? payload.attendance_rate
+            : toOptionalNumber(payload.attendance_rate, 0),
+        programs: normalizedPrograms,
+        program_breakdown: normalizedProgramBreakdown,
     }
 }
 
@@ -458,13 +523,66 @@ export function normalizePasswordResetResponse(payload = {}) {
     }
 }
 
+function normalizeEventTimeStatusInfo(payload = null) {
+    if (!payload || typeof payload !== 'object') return null
+
+    return {
+        ...payload,
+        event_status: toOptionalString(payload.event_status ?? payload.status, 'unknown'),
+        status: toOptionalString(payload.event_status ?? payload.status, 'unknown'),
+        current_time: toOptionalString(payload.current_time, nowIso()),
+        check_in_opens_at: toOptionalString(payload.check_in_opens_at, null),
+        start_time: toOptionalString(payload.start_time, null),
+        end_time: toOptionalString(payload.end_time, null),
+        late_threshold_time: toOptionalString(payload.late_threshold_time, null),
+        attendance_override_active: Boolean(payload.attendance_override_active),
+        effective_present_until_at: toOptionalString(payload.effective_present_until_at, null),
+        effective_late_until_at: toOptionalString(payload.effective_late_until_at, null),
+        sign_out_opens_at: toOptionalString(payload.sign_out_opens_at, null),
+        normal_sign_out_closes_at: toOptionalString(payload.normal_sign_out_closes_at, null),
+        effective_sign_out_closes_at: toOptionalString(payload.effective_sign_out_closes_at, null),
+        timezone_name: toOptionalString(payload.timezone_name, null),
+    }
+}
+
+function normalizeEventAttendanceDecisionInfo(payload = null) {
+    if (!payload || typeof payload !== 'object') return null
+
+    return {
+        ...payload,
+        action: toOptionalString(payload.action, 'check_in'),
+        event_status: toOptionalString(payload.event_status ?? payload.status, 'unknown'),
+        status: toOptionalString(payload.event_status ?? payload.status, 'unknown'),
+        attendance_allowed: Boolean(payload.attendance_allowed),
+        attendance_status: toOptionalString(payload.attendance_status, null),
+        reason_code: toOptionalString(payload.reason_code, null),
+        message: toOptionalString(payload.message, ''),
+        current_time: toOptionalString(payload.current_time, nowIso()),
+        check_in_opens_at: toOptionalString(payload.check_in_opens_at, null),
+        start_time: toOptionalString(payload.start_time, null),
+        end_time: toOptionalString(payload.end_time, null),
+        late_threshold_time: toOptionalString(payload.late_threshold_time, null),
+        attendance_override_active: Boolean(payload.attendance_override_active),
+        effective_present_until_at: toOptionalString(payload.effective_present_until_at, null),
+        effective_late_until_at: toOptionalString(payload.effective_late_until_at, null),
+        sign_out_opens_at: toOptionalString(payload.sign_out_opens_at, null),
+        normal_sign_out_closes_at: toOptionalString(payload.normal_sign_out_closes_at, null),
+        effective_sign_out_closes_at: toOptionalString(payload.effective_sign_out_closes_at, null),
+        timezone_name: toOptionalString(payload.timezone_name, null),
+    }
+}
+
 export function normalizeEventLocationResponse(payload = {}) {
     return {
         ...payload,
         ok: payload.ok !== false,
         reason: toOptionalString(payload.reason, null),
         distance_m: typeof payload.distance_m === 'number' ? payload.distance_m : toOptionalNumber(payload.distance_m, null),
+        effective_distance_m: typeof payload.effective_distance_m === 'number' ? payload.effective_distance_m : toOptionalNumber(payload.effective_distance_m, null),
         radius_m: typeof payload.radius_m === 'number' ? payload.radius_m : toOptionalNumber(payload.radius_m, null),
+        accuracy_m: typeof payload.accuracy_m === 'number' ? payload.accuracy_m : toOptionalNumber(payload.accuracy_m, null),
+        time_status: normalizeEventTimeStatusInfo(payload.time_status),
+        attendance_decision: normalizeEventAttendanceDecisionInfo(payload.attendance_decision),
     }
 }
 
@@ -620,9 +738,7 @@ export function normalizeGovernanceSsgSetup(payload = null) {
 
 export function normalizeEventTimeStatus(payload = {}) {
     return {
-        ...payload,
+        ...normalizeEventTimeStatusInfo(payload),
         event_id: toOptionalNumber(payload.event_id, null),
-        status: toOptionalString(payload.status, 'unknown'),
-        current_time: toOptionalString(payload.current_time, nowIso()),
     }
 }

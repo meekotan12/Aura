@@ -55,14 +55,14 @@
               id="school-it-department-programs-add-panel"
               class="school-it-department-programs__panel"
               role="region"
-              aria-label="Add program"
+              :aria-label="programPanelAriaLabel"
             >
               <div class="school-it-department-programs__panel-inner">
                 <div class="school-it-department-programs__panel-header">
                   <button
                     class="school-it-department-programs__panel-close"
                     type="button"
-                    aria-label="Close add program"
+                    aria-label="Close program panel"
                     @click="closeAddProgramPanel"
                   >
                     <X :size="18" :stroke-width="2.4" />
@@ -283,6 +283,7 @@ const selectedProgramId = ref(null)
 const chartRenderFailed = ref(false)
 const isAddProgramOpen = ref(false)
 const isSavingProgram = ref(false)
+const programPanelMode = ref('create')
 const programDraftName = ref('')
 const programInputEl = ref(null)
 const programPanelMessage = ref('')
@@ -443,12 +444,14 @@ const activeProgramId = computed(() => {
   return selectedProgram?.id ?? ringItems.value[0]?.id ?? null
 })
 
-const isEditingProgram = computed(() => Number.isFinite(Number(editingProgramId.value)))
+const resolvedEditingProgramId = computed(() => normalizeWorkspaceEntityId(editingProgramId.value))
+const isEditingProgram = computed(() => programPanelMode.value === 'edit' && resolvedEditingProgramId.value != null)
+const programPanelAriaLabel = computed(() => isEditingProgram.value ? 'Edit program' : 'Add program')
 const programPanelTitle = computed(() => isEditingProgram.value ? 'Edit Program' : 'Add Program')
-const programSubmitLabel = computed(() => isEditingProgram.value ? 'Save' : 'Enter')
+const programSubmitLabel = computed(() => isEditingProgram.value ? 'Save' : 'Add')
 const programSubmitDisabled = computed(() => {
   const normalizedName = programDraftName.value.trim()
-  return !selectedDepartment.value || isSavingProgram.value || normalizedName.length < 2
+  return !selectedDepartment.value || isSavingProgram.value || normalizedName.length < 2 || normalizedName.length > 100
 })
 
 const programNameLookup = computed(() => new Map(
@@ -558,19 +561,28 @@ function buildProgramShortLabel(programName) {
   return parts.slice(0, Math.min(2, parts.length)).join(' ')
 }
 
+function normalizeWorkspaceEntityId(value) {
+  const normalizedValue = Number(value)
+  return Number.isInteger(normalizedValue) && normalizedValue > 0 ? normalizedValue : null
+}
+
 function openAddProgramPanel() {
   if (!selectedDepartment.value) return
   closeAllProgramSwipes()
+  programPanelMode.value = 'create'
   editingProgramId.value = null
+  programDraftName.value = ''
   programPanelMessage.value = ''
   programPanelError.value = false
   isAddProgramOpen.value = true
 }
 
 function openEditProgramPanel(program) {
-  if (!program?.id) return
+  const normalizedProgramId = normalizeWorkspaceEntityId(program?.id)
+  if (normalizedProgramId == null) return
   closeAllProgramSwipes()
-  editingProgramId.value = Number(program.id)
+  programPanelMode.value = 'edit'
+  editingProgramId.value = normalizedProgramId
   programDraftName.value = String(program.name || '')
   programPanelMessage.value = ''
   programPanelError.value = false
@@ -579,6 +591,7 @@ function openEditProgramPanel(program) {
 
 function closeAddProgramPanel() {
   isAddProgramOpen.value = false
+  programPanelMode.value = 'create'
   programPanelMessage.value = ''
   programPanelError.value = false
   programDraftName.value = ''
@@ -589,8 +602,10 @@ async function submitProgram() {
   if (programSubmitDisabled.value || !selectedDepartment.value) return
 
   const normalizedName = programDraftName.value.trim()
+  const resolvedProgramId = resolvedEditingProgramId.value
+  const mutationMode = isEditingProgram.value ? 'update' : 'create'
   const existingProgramId = programNameLookup.value.get(normalizedName.toLowerCase())
-  if (existingProgramId && Number(existingProgramId) !== Number(editingProgramId.value)) {
+  if (existingProgramId != null && existingProgramId !== resolvedProgramId) {
     programPanelError.value = true
     programPanelMessage.value = `${normalizedName} already exists in this college.`
     return
@@ -602,17 +617,17 @@ async function submitProgram() {
 
   try {
     const authToken = localStorage.getItem('aura_token') || ''
-    const createdProgram = isEditingProgram.value
+    const createdProgram = mutationMode === 'update'
       ? (
         props.preview
           ? {
-            ...(activePrograms.value.find((program) => Number(program.id) === Number(editingProgramId.value)) || {}),
-            id: Number(editingProgramId.value),
+            ...(activePrograms.value.find((program) => Number(program.id) === resolvedProgramId) || {}),
+            id: resolvedProgramId,
             school_id: schoolId.value,
             name: normalizedName,
             department_ids: [Number(selectedDepartment.value.id)],
           }
-          : await updateProgram(apiBaseUrl.value, authToken, editingProgramId.value, {
+          : await updateProgram(apiBaseUrl.value, authToken, resolvedProgramId, {
             name: normalizedName,
             department_ids: [Number(selectedDepartment.value.id)],
           })
@@ -640,7 +655,7 @@ async function submitProgram() {
     }
 
     selectedProgramId.value = createdProgram.id
-    programPanelMessage.value = isEditingProgram.value
+    programPanelMessage.value = mutationMode === 'update'
       ? `${createdProgram.name} updated successfully.`
       : `${createdProgram.name} added successfully.`
     programDraftName.value = ''
@@ -649,7 +664,7 @@ async function submitProgram() {
     }, 420)
   } catch (error) {
     programPanelError.value = true
-    programPanelMessage.value = resolveProgramMutationErrorMessage(error, isEditingProgram.value ? 'update' : 'create')
+    programPanelMessage.value = resolveProgramMutationErrorMessage(error, mutationMode)
   } finally {
     isSavingProgram.value = false
   }
@@ -680,7 +695,7 @@ async function deleteProgramItem(program) {
       selectedProgramId.value = null
     }
 
-    if (Number(editingProgramId.value) === Number(program.id)) {
+    if (resolvedEditingProgramId.value === Number(program.id)) {
       closeAddProgramPanel()
     }
   } catch (error) {
@@ -691,10 +706,13 @@ async function deleteProgramItem(program) {
 }
 
 function manageProgram(program) {
+  if (!program?.id || !selectedDepartment.value?.id) return
+  closeAllProgramSwipes()
+  resetProgramSwipeGesture()
   router.push({
     name: programRouteName.value,
     params: {
-      departmentId: selectedDepartment.value?.id,
+      departmentId: selectedDepartment.value.id,
       programId: program.id,
     },
   })
@@ -739,8 +757,35 @@ function resolveProgramMutationErrorMessage(error, mode = 'create') {
     return `Unable to ${verb} this program right now.`
   }
 
+  const validationDetail = Array.isArray(error?.details?.detail)
+    ? error.details.detail.find((item) => item && typeof item === 'object')
+    : null
+  const validationMessage = typeof validationDetail?.msg === 'string'
+    ? validationDetail.msg
+    : null
+  const validationPath = Array.isArray(validationDetail?.loc)
+    ? validationDetail.loc.map((segment) => String(segment).toLowerCase())
+    : []
+
   if (error.status === 422) {
+    if (validationPath.includes('name')) {
+      return 'Program name must be between 2 and 100 characters.'
+    }
+    if (validationPath.includes('program_id')) {
+      return 'The selected program could not be resolved. Please reopen the panel and try again.'
+    }
+    if (validationMessage) {
+      return validationMessage
+    }
     return 'Program name must be between 2 and 100 characters.'
+  }
+
+  if (error.status === 400 && /already exists/i.test(String(error.message || ''))) {
+    return 'A program with this name already exists in this college.'
+  }
+
+  if (error.status === 400 && mode === 'delete' && /cannot delete program|referenced by other records/i.test(String(error.message || ''))) {
+    return 'This program is still linked to student records and cannot be deleted yet.'
   }
 
   if (error.status === 403) {

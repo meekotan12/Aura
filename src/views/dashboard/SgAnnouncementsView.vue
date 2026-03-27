@@ -112,6 +112,7 @@ import {
   updateGovernanceAnnouncement,
   deleteGovernanceAnnouncement,
 } from '@/services/backendApi.js'
+import { resolvePreferredGovernanceUnit } from '@/services/governanceScope.js'
 
 const router = useRouter()
 const { apiBaseUrl } = useDashboardSession()
@@ -159,11 +160,12 @@ async function loadData(url) {
   try {
     const token = localStorage.getItem('aura_token') || ''
     const access = await getGovernanceAccess(url, token)
-    const units = Array.isArray(access?.units) ? access.units : []
-    const ssg = units.find((u) => String(u?.unit_type || '').toUpperCase() === 'SSG')
-    if (!ssg) { loadError.value = 'No governance unit found.'; return }
-    governanceUnitId.value = ssg.governance_unit_id
-    announcements.value = await getGovernanceAnnouncements(url, token, ssg.governance_unit_id)
+    const governanceUnit = resolvePreferredGovernanceUnit(access, {
+      requiredPermissionCode: 'manage_announcements',
+    })
+    if (!governanceUnit) { loadError.value = 'No governance unit found.'; return }
+    governanceUnitId.value = governanceUnit.governance_unit_id
+    announcements.value = await getGovernanceAnnouncements(url, token, governanceUnit.governance_unit_id)
   } catch (e) {
     loadError.value = e?.message || 'Unable to load announcements.'
   } finally { isLoading.value = false }

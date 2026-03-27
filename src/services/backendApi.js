@@ -12,6 +12,8 @@ import {
     normalizeGovernanceRequest,
     normalizeGovernanceSetting,
     normalizeEvent,
+    normalizeEventAttendanceReport,
+    normalizeEventAttendanceWithStudent,
     normalizeEventLocationResponse,
     normalizeEventTimeStatus,
     normalizeFaceReferenceResponse,
@@ -437,6 +439,26 @@ export async function getEventById(baseUrl, token, eventId) {
     }, [404, 405]))
 }
 
+export async function updateEvent(baseUrl, token, eventId, payload, params = {}) {
+    return normalizeEvent(await requestWithFallback(baseUrl, [`/api/events/${eventId}`, `/events/${eventId}`], {
+        method: 'PATCH',
+        token,
+        params,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    }, [404, 405]))
+}
+
+export async function deleteEvent(baseUrl, token, eventId, params = {}) {
+    await requestWithFallback(baseUrl, [`/api/events/${eventId}`, `/events/${eventId}`], {
+        method: 'DELETE',
+        token,
+        params,
+    }, [404, 405])
+}
+
 export async function getUsers(baseUrl, token, params = {}) {
     const payload = await requestWithFallback(baseUrl, ['/api/users/', '/users/'], {
         method: 'GET',
@@ -856,6 +878,17 @@ export async function createUser(baseUrl, token, payload) {
     }, [404, 405]))
 }
 
+export async function createStudentAccount(baseUrl, token, payload) {
+    return normalizeUserWithRelations(await requestWithFallback(baseUrl, ['/api/users/students/', '/users/students/'], {
+        method: 'POST',
+        token,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    }, [404, 405]))
+}
+
 export async function createStudentProfile(baseUrl, token, payload) {
     return normalizeUserWithRelations(await requestWithFallback(baseUrl, ['/api/users/admin/students/', '/users/admin/students/'], {
         method: 'POST',
@@ -878,9 +911,9 @@ export async function previewImportStudents(baseUrl, token, file) {
     }))
 }
 
-export async function startStudentImport(baseUrl, token, file) {
+export async function startStudentImport(baseUrl, token, previewToken) {
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('preview_token', String(previewToken || ''))
 
     return normalizeImportJobCreateResponse(await request(baseUrl, '/api/admin/import-students', {
         method: 'POST',
@@ -894,6 +927,108 @@ export async function getStudentImportStatus(baseUrl, token, jobId) {
         method: 'GET',
         token,
     }))
+}
+
+async function downloadBinary(baseUrl, path, { token, params } = {}) {
+    const timeoutMs = resolveApiTimeoutMs()
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+        const response = await fetch(buildUrl(baseUrl, path, params), {
+            method: 'GET',
+            signal: controller.signal,
+            headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(isNgrokApiBaseUrl(baseUrl) ? { 'ngrok-skip-browser-warning': 'true' } : {}),
+            },
+        })
+
+        if (!response.ok) {
+            const contentType = response.headers.get('content-type') || ''
+            const isJson = contentType.includes('application/json')
+            let payload = null
+
+            try {
+                payload = isJson ? await response.json() : await response.text()
+            } catch {
+                payload = null
+            }
+
+            const message =
+                payload?.detail?.message ||
+                payload?.detail ||
+                payload?.message ||
+                response.statusText ||
+                'Request failed.'
+
+            throw new BackendApiError(String(message), {
+                status: response.status,
+                details: payload,
+            })
+        }
+
+        return await response.blob()
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new BackendApiError(
+                `The API took too long to respond. The backend may be offline. (${timeoutMs}ms timeout)`,
+                {
+                    details: {
+                        path,
+                        timeoutMs,
+                    },
+                }
+            )
+        }
+
+        if (error instanceof BackendApiError) {
+            throw error
+        }
+
+        throw new BackendApiError(
+            'Unable to reach the API. The server may be unavailable or the request may be blocked.',
+            {
+                details: {
+                    cause: error?.message || null,
+                    path,
+                },
+            }
+        )
+    } finally {
+        clearTimeout(timeoutId)
+    }
+}
+
+export async function downloadStudentImportTemplate(baseUrl, token) {
+    return downloadBinary(baseUrl, '/api/admin/import-students/template', {
+        token,
+    })
+}
+
+export async function downloadPreviewImportErrors(baseUrl, token, previewToken) {
+    return downloadBinary(baseUrl, `/api/admin/import-preview-errors/${previewToken}/download`, {
+        token,
+    })
+}
+
+export async function downloadPreviewRetryFile(baseUrl, token, previewToken) {
+    return downloadBinary(baseUrl, `/api/admin/import-preview-errors/${previewToken}/retry-download`, {
+        token,
+    })
+}
+
+export async function removeInvalidPreviewRows(baseUrl, token, previewToken) {
+    return normalizeImportPreviewSummary(await request(baseUrl, `/api/admin/import-preview-errors/${previewToken}/remove-invalid`, {
+        method: 'POST',
+        token,
+    }))
+}
+
+export async function downloadImportErrors(baseUrl, token, jobId) {
+    return downloadBinary(baseUrl, `/api/admin/import-errors/${jobId}/download`, {
+        token,
+    })
 }
 
 export async function getCurrentUserProfile(baseUrl, token) {
@@ -970,13 +1105,73 @@ export async function changePassword(baseUrl, token, payload, endpoint = '/auth/
     }))
 }
 
+function normalizeStudentAttendanceResponsePayload(payload = []) {
+    if (!Array.isArray(payload)) return []
+
+    return payload.flatMap((item) => {
+        const studentAttendances = Array.isArray(item?.attendances) ? item.attendances : []
+        const responseStudentId = item?.student_id ?? null
+
+        return studentAttendances.map((attendance) => normalizeAttendanceRecord({
+            ...attendance,
+            student_id: attendance?.student_id ?? responseStudentId,
+        }))
+    })
+}
+
+function normalizeAttendanceCollectionPayload(payload = null) {
+    if (!Array.isArray(payload)) return []
+
+    const looksNestedStudentResponse = payload.some((item) => Array.isArray(item?.attendances))
+    if (looksNestedStudentResponse) {
+        return normalizeStudentAttendanceResponsePayload(payload)
+    }
+
+    return payload.map(normalizeAttendanceRecord)
+}
+
 export async function getMyAttendance(baseUrl, token, params = {}) {
-    const payload = await request(baseUrl, '/attendance/students/me', {
+    const payload = await requestWithFallback(baseUrl, [
+        '/api/attendance/me/records',
+        '/attendance/me/records',
+        '/api/attendance/students/me',
+        '/attendance/students/me',
+    ], {
         method: 'GET',
         token,
         params,
-    })
-    return Array.isArray(payload) ? payload.map(normalizeAttendanceRecord) : []
+    }, [403, 404, 405])
+    return normalizeAttendanceCollectionPayload(payload)
+}
+
+export async function createAnnouncement(baseUrl, token, payload) {
+    return requestWithFallback(baseUrl, ['/api/announcements', '/announcements'], {
+        method: 'POST',
+        token,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    }, [404, 405])
+}
+
+/**
+ * Creates a new governance event
+ * @param {string} baseUrl - Base URL of the API
+ * @param {string} token - Session token
+ * @param {Object} payload - Event data payload
+ * @returns {Promise<Object>} The created event
+ */
+export async function createGovernanceEvent(baseUrl, token, payload, params = {}) {
+    return normalizeEvent(await requestWithFallback(baseUrl, ['/api/events/', '/events/', '/api/governance/events'], {
+        method: 'POST',
+        token,
+        params,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    }, [404, 405]))
 }
 
 export async function getAttendanceSummary(baseUrl, token, params = {}) {
@@ -988,12 +1183,31 @@ export async function getAttendanceSummary(baseUrl, token, params = {}) {
 }
 
 export async function getEventAttendance(baseUrl, token, eventId, params = {}) {
-    const payload = await requestWithFallback(baseUrl, [`/api/events/${eventId}/attendance`, `/events/${eventId}/attendance`], {
+    const payload = await requestWithFallback(baseUrl, [
+        `/api/attendance/events/${eventId}/attendances-with-students`,
+        `/api/attendance/events/${eventId}/attendances`,
+        `/attendance/events/${eventId}/attendances-with-students`,
+        `/attendance/events/${eventId}/attendances`,
+    ], {
+        method: 'GET',
+        token,
+        params: {
+            active_only: false,
+            ...params,
+        },
+    }, [404, 405])
+    return Array.isArray(payload) ? payload.map(normalizeEventAttendanceWithStudent) : []
+}
+
+export async function getEventAttendanceReport(baseUrl, token, eventId, params = {}) {
+    return normalizeEventAttendanceReport(await requestWithFallback(baseUrl, [
+        `/api/attendance/events/${eventId}/report`,
+        `/attendance/events/${eventId}/report`,
+    ], {
         method: 'GET',
         token,
         params,
-    }, [404, 405])
-    return Array.isArray(payload) ? payload : []
+    }, [404, 405]))
 }
 
 export async function getFaceStatus(baseUrl, token) {
@@ -1064,7 +1278,11 @@ export async function recordFaceScanAttendance(baseUrl, token, {
             threshold,
         }),
     })
-    return { ok: payload?.ok !== false, ...payload }
+    return {
+        ok: payload?.ok !== false,
+        ...payload,
+        geo: payload?.geo ? normalizeEventLocationResponse(payload.geo) : null,
+    }
 }
 
 export async function recordFaceScanTimeout(baseUrl, token, { eventId, studentId }) {

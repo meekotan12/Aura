@@ -40,6 +40,7 @@ import StudentCouncilSetupStage from '@/components/council/StudentCouncilSetupSt
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { useSgDashboard } from '@/composables/useSgDashboard.js'
 import { getGovernanceAccess, createGovernanceUnit } from '@/services/backendApi.js'
+import { resolvePreferredGovernanceUnit } from '@/services/governanceScope.js'
 import { createEmptyCouncilDraft } from '@/services/studentCouncilManagement.js'
 
 const router = useRouter()
@@ -80,21 +81,23 @@ const submitDisabled = computed(() => {
 function goBack() { router.push('/sg') }
 
 watch(
-  [apiBaseUrl, () => sgLoading.value],
+  [apiBaseUrl, () => sgLoading.value, childType],
   async ([url]) => {
-    if (!url || sgLoading.value) return
+    if (!url || sgLoading.value || !childType.value) return
     await resolveParent(url)
   },
   { immediate: true }
 )
 
 async function resolveParent(url) {
+  parentUnitId.value = null
   try {
     const token = localStorage.getItem('aura_token') || ''
     const access = await getGovernanceAccess(url, token)
-    const units = Array.isArray(access?.units) ? access.units : []
-    const ssg = units.find((u) => String(u?.unit_type || '').toUpperCase() === 'SSG')
-    if (ssg) parentUnitId.value = ssg.governance_unit_id
+    const parentUnit = resolvePreferredGovernanceUnit(access, {
+      requiredPermissionCode: childType.value === 'SG' ? 'create_sg' : 'create_org',
+    })
+    parentUnitId.value = Number(parentUnit?.governance_unit_id) || null
   } catch { /* ignore */ }
 }
 

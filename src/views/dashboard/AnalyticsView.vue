@@ -158,6 +158,12 @@ import { surfaceAuraLogo } from '@/config/theme.js'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { usePreviewTheme } from '@/composables/usePreviewTheme.js'
 import { studentDashboardPreviewData } from '@/data/studentDashboardPreview.js'
+import {
+  getAttendanceRecordTimestamp,
+  getLatestAttendanceRecordsByEvent,
+  isValidCompletedAttendanceRecord,
+  resolveAttendanceDisplayStatus,
+} from '@/services/attendanceFlow.js'
 import { resolveDashboardAiOverview } from '@/services/dashboardAiOverview.js'
 
 const props = defineProps({
@@ -181,9 +187,10 @@ const activeSchoolSettings = computed(() => props.preview ? studentDashboardPrev
 usePreviewTheme(() => props.preview, activeSchoolSettings)
 
 const aiOverview = computed(() => resolveDashboardAiOverview())
+const latestAttendanceRecords = computed(() => getLatestAttendanceRecordsByEvent(activeAttendanceRecords.value))
 
-const attendanceSummary = computed(() => activeAttendanceRecords.value.reduce((summary, record) => {
-  const status = String(record?.status ?? '').toLowerCase()
+const attendanceSummary = computed(() => latestAttendanceRecords.value.reduce((summary, record) => {
+  const status = resolveAnalyticsStatus(record)
   if (status === 'present') summary.present += 1
   if (status === 'late') summary.late += 1
   if (status === 'absent') summary.absent += 1
@@ -225,7 +232,7 @@ const statCards = computed(() => [
   },
 ])
 
-const trendWeeks = computed(() => buildWeeklyTrend(activeAttendanceRecords.value, 6))
+const trendWeeks = computed(() => buildWeeklyTrend(latestAttendanceRecords.value, 6))
 
 const bestWeek = computed(() => {
   if (!trendWeeks.value.length) {
@@ -299,16 +306,25 @@ function chartY(rate) {
   return top + usableHeight * (1 - (rate / 100))
 }
 
+function resolveAnalyticsStatus(record) {
+  const displayStatus = resolveAttendanceDisplayStatus(record)
+
+  if (displayStatus === 'absent') return 'absent'
+  if (displayStatus === 'late' && isValidCompletedAttendanceRecord(record)) return 'late'
+  if (displayStatus === 'present' && isValidCompletedAttendanceRecord(record)) return 'present'
+  if (displayStatus === 'excused') return 'excused'
+  if (displayStatus === 'incomplete') return 'incomplete'
+  return 'unmarked'
+}
+
 function buildWeeklyTrend(records, totalWeeks = 6) {
   const normalized = records
     .map((record) => {
-      const raw = record?.time_in || record?.created_at || record?.updated_at
-      if (!raw) return null
-      const parsed = new Date(raw)
-      if (Number.isNaN(parsed.getTime())) return null
+      const timestamp = getAttendanceRecordTimestamp(record)
+      if (!timestamp) return null
       return {
-        status: String(record?.status ?? '').toLowerCase(),
-        date: parsed,
+        status: resolveAnalyticsStatus(record),
+        date: new Date(timestamp),
       }
     })
     .filter(Boolean)

@@ -1,0 +1,38 @@
+{
+  "appId": "com.aura.app",
+  "appName": "Aura",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "backend-api-production-32e5.up.railway.app",
+      "*.railway.app",
+      "*.ngrok-free.app",
+      "*.ngrok.app"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 2000,
+      "androidScaleType": "CENTER_CROP",
+      "backgroundColor": "#EBEBEB",
+      "splashFullScreen": true,
+      "splashImmersive": true
+    },
+    "StatusBar": {
+      "style": "LIGHT",
+      "backgroundColor": "#EBEBEB"
+    },
+    "Keyboard": {
+      "resize": "none",
+      "resizeOnFullScreen": false
+    }
+  }
+}

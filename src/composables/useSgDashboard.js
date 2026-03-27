@@ -1,6 +1,7 @@
 import { ref, watch, computed } from 'vue'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { getGovernanceAccess } from '@/services/backendApi.js'
+import { resolvePreferredGovernanceUnit } from '@/services/governanceScope.js'
 import {
   sgPreviewUser,
   sgPreviewSchoolSettings,
@@ -22,7 +23,8 @@ let hasFetched = false
  * Sources permissions directly from /api/governance/access/me which returns:
  *   { user_id, school_id, permission_codes: [...], units: [{ governance_unit_id, unit_code, unit_name, unit_type, permission_codes: [...] }] }
  *
- * /api/governance/ssg/setup is admin-only — students can't call it.
+ * The backend decides the user's unit scope, so we preserve access order rather
+ * than hardcoding SSG-over-SG precedence in the frontend.
  */
 export function useSgDashboard(preview = false) {
   const { dashboardState, apiBaseUrl, token } = useDashboardSession()
@@ -81,27 +83,30 @@ export function useSgDashboard(preview = false) {
   )
 
   function updateCache(access, user) {
-    const units = Array.isArray(access?.units) ? access.units : []
-    const ssgUnit = units.find((u) => String(u?.unit_type || '').toUpperCase() === 'SSG')
+    const governanceUnit = resolvePreferredGovernanceUnit(access)
 
-    if (!ssgUnit) {
-      cachedError.value = 'You do not have access to an SG unit.'
+    if (!governanceUnit) {
+      cachedPermissions.value = []
+      cachedOfficerPosition.value = ''
+      cachedAcronym.value = 'SG'
+      cachedUnitName.value = 'Student Government'
+      cachedError.value = 'You do not have access to a governance unit.'
       return
     }
 
-    const unitPerms = Array.isArray(ssgUnit.permission_codes) ? ssgUnit.permission_codes : []
+    const unitPerms = Array.isArray(governanceUnit.permission_codes) ? governanceUnit.permission_codes : []
     const topPerms = Array.isArray(access.permission_codes) ? access.permission_codes : []
     cachedPermissions.value = [...new Set([...unitPerms, ...topPerms])]
 
-    cachedAcronym.value = ssgUnit.unit_code || 'SSG'
-    cachedUnitName.value = ssgUnit.unit_name || 'Student Government'
+    cachedAcronym.value = governanceUnit.unit_code || 'SG'
+    cachedUnitName.value = governanceUnit.unit_name || 'Student Government'
 
     const ssgProfile = user?.ssg_profile
     let rawPos = 
-      ssgUnit?.position_title || 
-      ssgUnit?.member?.position_title || 
-      ssgUnit?.role || 
-      ssgUnit?.member?.role || 
+      governanceUnit?.position_title || 
+      governanceUnit?.member?.position_title || 
+      governanceUnit?.role || 
+      governanceUnit?.member?.role || 
       ssgProfile?.position_title || 
       ssgProfile?.role || 
       ''

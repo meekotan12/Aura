@@ -178,7 +178,14 @@ import { secondaryAuraLogo, surfaceAuraLogo } from '@/config/theme.js'
 import { useChat } from '@/composables/useChat.js'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { studentDashboardPreviewData } from '@/data/studentDashboardPreview.js'
+import {
+  getAttendanceRecordTimestamp,
+  getLatestAttendanceRecordsByEvent,
+  isValidCompletedAttendanceRecord,
+  resolveAttendanceDisplayStatus,
+} from '@/services/attendanceFlow.js'
 import { resolveDashboardAiOverview } from '@/services/dashboardAiOverview.js'
+import { primeLocationAccess } from '@/services/devicePermissions.js'
 import { createSearchFieldAttrs } from '@/services/searchFieldAttrs.js'
 
 const props = defineProps({
@@ -201,7 +208,7 @@ const tabs = [
   { key: 'attended', label: 'Attended' },
 ]
 
-const { currentUser, events, attendanceRecords, hasAttendanceForEvent } = useDashboardSession()
+const { currentUser, events, attendanceRecords, hasAttendanceForEvent, hasOpenAttendanceForEvent } = useDashboardSession()
 const { messages, inputText, isTyping, scrollEl, sendMessage, closeAll } = useChat()
 const activeUser = computed(() => props.preview ? studentDashboardPreviewData.user : currentUser.value)
 const activeEvents = computed(() => props.preview ? studentDashboardPreviewData.events : events.value)
@@ -227,26 +234,16 @@ const filteredEvents = computed(() => {
   return searchableEvents.value.filter((event) => [event.name, event.location, event.status].filter(Boolean).join(' ').toLowerCase().includes(query))
 })
 
+const latestAttendanceRecords = computed(() => getLatestAttendanceRecordsByEvent(activeAttendanceRecords.value))
+
 const latestAnalyticsEntries = computed(() => {
-  const records = [...activeAttendanceRecords.value]
-    .map((record) => {
-      const raw = record?.time_in || record?.created_at || record?.updated_at
-      const parsed = raw ? new Date(raw) : null
-      return {
-        record,
-        timestamp: parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0,
-      }
-    })
-    .sort((left, right) => right.timestamp - left.timestamp)
-
-  const latestByEvent = new Map()
-
-  records.forEach(({ record, timestamp }) => {
+  return latestAttendanceRecords.value.map((record) => {
     const eventId = Number(record?.event_id)
-    if (!Number.isFinite(eventId) || latestByEvent.has(eventId)) return
     const event = eventLookup.value[eventId]
-    const status = normalizeAttendanceStatus(record?.status)
-    latestByEvent.set(eventId, {
+    const status = resolveAnalyticsStatus(record)
+    const timestamp = getAttendanceRecordTimestamp(record)
+
+    return {
       key: `${eventId}-${timestamp}`,
       event,
       eventId,
@@ -255,10 +252,8 @@ const latestAnalyticsEntries = computed(() => {
       name: event?.name || `Event ${eventId}`,
       meta: buildAnalyticsSearchMeta(event, record, status),
       timestamp,
-    })
+    }
   })
-
-  return Array.from(latestByEvent.values())
 })
 
 const analyticsSearchResults = computed(() => {
@@ -280,8 +275,8 @@ const analyticsSearchResults = computed(() => {
   )
 })
 
-const summary = computed(() => activeAttendanceRecords.value.reduce((acc, record) => {
-  const status = String(record?.status ?? '').toLowerCase()
+const summary = computed(() => latestAttendanceRecords.value.reduce((acc, record) => {
+  const status = resolveAnalyticsStatus(record)
   if (status === 'present') acc.present += 1
   if (status === 'late') acc.late += 1
   if (status === 'absent') acc.absent += 1
@@ -303,7 +298,7 @@ const statCards = computed(() => {
 })
 
 const chartTitle = computed(() => activeTab.value === 'missed' ? 'Monthly Missed Events' : activeTab.value === 'late' ? 'Monthly Late Arrival' : 'Monthly Attendance')
-const chartBars = computed(() => buildChartBars(activeAttendanceRecords.value, activeTab.value))
+const chartBars = computed(() => buildChartBars(latestAttendanceRecords.value, activeTab.value))
 
 watch(isAiOpen, (open) => {
   if (open) {
@@ -322,7 +317,15 @@ function toggleAi() {
 
 function openEvent(event) {
   if (!event?.id) return
-  if (!props.preview && normalizeStatus(event.status) === 'ongoing' && !hasAttendanceForEvent(event.id)) {
+
+  const normalizedEventId = Number(event.id)
+  const shouldRouteToAttendance = (
+    hasOpenAttendanceForEvent(normalizedEventId)
+    || (normalizeStatus(event.status) === 'ongoing' && !hasAttendanceForEvent(normalizedEventId))
+  )
+
+  if (!props.preview && shouldRouteToAttendance) {
+    void primeLocationAccess()
     router.push(`/dashboard/schedule/${event.id}/attendance`)
     return
   }
@@ -337,10 +340,23 @@ function normalizeAttendanceStatus(status) {
   return String(status ?? '').trim().toLowerCase()
 }
 
+function resolveAnalyticsStatus(record) {
+  const displayStatus = resolveAttendanceDisplayStatus(record)
+
+  if (displayStatus === 'absent') return 'absent'
+  if (displayStatus === 'late' && isValidCompletedAttendanceRecord(record)) return 'late'
+  if (displayStatus === 'present' && isValidCompletedAttendanceRecord(record)) return 'present'
+  if (displayStatus === 'excused') return 'excused'
+  if (displayStatus === 'incomplete') return 'incomplete'
+  return 'unmarked'
+}
+
 function attendanceStatusLabel(status) {
   if (status === 'absent') return 'Missed'
   if (status === 'late') return 'Late'
   if (status === 'present') return 'Attended'
+  if (status === 'incomplete') return 'Waiting for Sign Out'
+  if (status === 'excused') return 'Excused'
   return 'Unmarked'
 }
 
@@ -348,7 +364,7 @@ function matchesActiveTab(status) {
   if (activeTab.value === 'missed') return status === 'absent'
   if (activeTab.value === 'late') return status === 'late'
   if (activeTab.value === 'attended') return status === 'present' || status === 'late'
-  return status === 'present' || status === 'late' || status === 'absent'
+  return ['present', 'late', 'absent', 'incomplete', 'excused'].includes(status)
 }
 
 function formatSearchMeta(event) {
@@ -402,7 +418,7 @@ function buildChartBars(records, mode) {
     const value = records.filter((record) => {
       const date = timestamp(record)
       if (!date || date < start || date > end) return false
-      const status = String(record?.status ?? '').toLowerCase()
+      const status = resolveAnalyticsStatus(record)
       if (mode === 'missed') return status === 'absent'
       if (mode === 'late') return status === 'late'
       return status === 'present' || status === 'late'

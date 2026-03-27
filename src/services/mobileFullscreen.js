@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { Capacitor } from '@capacitor/core'
 
 const MOBILE_FULLSCREEN_HINT_KEY = 'aura_mobile_fullscreen_hint_seen'
 const mobileFullscreenEligible = ref(false)
@@ -57,6 +58,9 @@ export async function requestMobileFullscreen() {
 
 export function startMobileFullscreenSync() {
     if (typeof window === 'undefined') return
+    // In native Capacitor app, already fullscreen — no hint needed
+    if (Capacitor.isNativePlatform()) return
+
     const eligible =
         isAndroid() &&
         isLikelyMobileViewport() &&
@@ -93,11 +97,51 @@ export function startMobileFullscreenSync() {
     })
 }
 
+async function unregisterAuraServiceWorkers() {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
+
+    try {
+        const registrations = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)))
+    } catch {
+        // Ignore service worker cleanup failures on unsupported browsers.
+    }
+
+    if (typeof caches === 'undefined') return
+
+    try {
+        const cacheKeys = await caches.keys()
+        await Promise.all(
+            cacheKeys
+                .filter((key) => key.startsWith('aura-'))
+                .map((key) => caches.delete(key))
+        )
+    } catch {
+        // Ignore cache cleanup failures; they should never block boot.
+    }
+}
+
 export function registerAuraServiceWorker() {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
-    if (!window.isSecureContext && window.location.hostname !== 'localhost') return
+    // Skip SW registration in native Capacitor app
+    if (Capacitor.isNativePlatform()) return
+    const hostname = String(window.location.hostname || '').toLowerCase()
+    const isLocalhost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '[::1]' ||
+        hostname.endsWith('.local')
+
+    if (!import.meta.env.PROD || isLocalhost) {
+        window.addEventListener('load', () => {
+            unregisterAuraServiceWorkers().catch(() => null)
+        }, { once: true })
+        return
+    }
+
+    if (!window.isSecureContext) return
 
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(() => null)
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => null)
     }, { once: true })
 }

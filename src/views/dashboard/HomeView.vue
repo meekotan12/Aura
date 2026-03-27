@@ -220,7 +220,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Search, Send } from 'lucide-vue-next'
 import TopBar from '@/components/dashboard/TopBar.vue'
 import UniversityBanner from '@/components/dashboard/UniversityBanner.vue'
@@ -232,7 +232,9 @@ import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { useStoredAuthMeta } from '@/composables/useStoredAuthMeta.js'
 import { studentDashboardPreviewData } from '@/data/studentDashboardPreview.js'
 import { resolveBackendMediaCandidates } from '@/services/backendMedia.js'
+import { primeLocationAccess } from '@/services/devicePermissions.js'
 import { createSearchFieldAttrs } from '@/services/searchFieldAttrs.js'
+import { resolveAttendanceLocation, resolveEventDetailLocation } from '@/services/routeWorkspace.js'
 
 const props = defineProps({
   preview: {
@@ -248,7 +250,8 @@ const showNotifications = ref(false)
 const isMobileAiOpen = ref(false)
 const mobileInputEl = ref(null)
 const router = useRouter()
-const { currentUser, schoolSettings, events, hasAttendanceForEvent } = useDashboardSession()
+const route = useRoute()
+const { currentUser, schoolSettings, events, hasAttendanceForEvent, hasOpenAttendanceForEvent } = useDashboardSession()
 const authMeta = useStoredAuthMeta()
 const activeUser = computed(() => props.preview ? studentDashboardPreviewData.user : currentUser.value)
 const activeSchoolSettings = computed(() => props.preview ? studentDashboardPreviewData.schoolSettings : schoolSettings.value)
@@ -471,11 +474,19 @@ function handleAnnouncementClick() {
 
 function handleSeeEvent(event) {
   if (props.preview || !event?.id) return
-  if (event.status === 'ongoing' && !hasAttendanceForEvent(event.id)) {
-    router.push(`/dashboard/schedule/${event.id}/attendance`)
+
+  const normalizedEventId = Number(event.id)
+  const shouldRouteToAttendance = (
+    hasOpenAttendanceForEvent(normalizedEventId)
+    || (event.status === 'ongoing' && !hasAttendanceForEvent(normalizedEventId))
+  )
+
+  if (shouldRouteToAttendance) {
+    void primeLocationAccess()
+    router.push(resolveAttendanceLocation(route, event.id))
     return
   }
-  router.push(`/dashboard/schedule/${event.id}`)
+  router.push(resolveEventDetailLocation(route, event.id))
 }
 
 function handleSearchResult(event) {

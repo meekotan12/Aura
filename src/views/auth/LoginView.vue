@@ -1,8 +1,8 @@
 <template>
-  <div class="min-h-screen flex flex-col font-[Manrope] overflow-hidden" style="background: var(--color-bg);">
+  <div class="login-page min-h-dvh flex flex-col font-[Manrope] overflow-auto" style="background: var(--color-bg);">
     <!-- Main centered content -->
     <div class="flex-1 flex flex-col items-center justify-center px-8 relative z-10">
-      <div class="w-full max-w-[340px] flex flex-col gap-6">
+      <div class="w-full max-w-[340px] flex flex-col gap-6 login-form-area">
 
         <!-- Heading -->
         <h1 
@@ -59,21 +59,38 @@
           >
             Log In
           </BaseButton>
+
+          <BaseButton
+            type="button"
+            variant="secondary"
+            size="md"
+            class="group"
+            :disabled="isLoading"
+            @click="openQuickAttendance"
+          >
+            Quick Attendance
+          </BaseButton>
+
         </form>
 
         <!-- Powered by Aura -->
         <div 
-          class="flex items-center justify-center gap-2 mt-1 transition-all duration-700 delay-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          class="flex flex-col items-center justify-center gap-2 mt-1 transition-all duration-700 delay-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
           :class="isMounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'"
         >
-          <img
-            :src="surfaceAuraLogo"
-            alt="Aura"
-            class="h-8 w-auto object-contain"
-          />
-          <span class="text-[13px] font-medium tracking-tight" style="color: var(--color-text-primary);">
-            Powered by Aura Ai
-          </span>
+          <div class="flex items-center justify-center gap-2">
+            <img
+              :src="surfaceAuraLogo"
+              alt="Aura"
+              class="h-8 w-auto object-contain"
+            />
+            <span class="text-[13px] font-medium tracking-tight" style="color: var(--color-text-primary);">
+              Powered by Aura Ai
+            </span>
+          </div>
+          <p class="quick-attendance-link-note">
+            Use Quick Attendance to mark public event sign in or sign out without logging in.
+          </p>
         </div>
 
       </div>
@@ -97,6 +114,7 @@
 
 <script setup>
 import { computed, ref, onBeforeMount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useAuth } from '@/composables/useAuth.js'
@@ -107,6 +125,7 @@ const email = ref('')
 const password = ref('')
 const isMounted = ref(false)
 const sessionNotice = ref('')
+const router = useRouter()
 
 const { login, isLoading, error } = useAuth()
 const visibleMessage = computed(() => error.value || sessionNotice.value)
@@ -118,8 +137,6 @@ onBeforeMount(() => {
 onMounted(() => {
   sessionNotice.value = consumeSessionExpiredNotice()
 
-  // Wait a tiny bit on load to ensure the browser paints the initial opacity-0 state
-  // before we flip it to mount the animation, making it extremely crisp.
   setTimeout(() => {
     isMounted.value = true
   }, 50)
@@ -127,6 +144,10 @@ onMounted(() => {
 
 async function handleLogin() {
   await login(email.value, password.value)
+}
+
+function openQuickAttendance() {
+  router.push({ name: 'QuickAttendance' })
 }
 </script>
 
@@ -138,5 +159,24 @@ async function handleLogin() {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Ensure form area scrolls above keyboard on mobile */
+.login-form-area {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+/* When keyboard is open (viewport shrinks), allow scrolling */
+.login-page {
+  -webkit-overflow-scrolling: touch;
+}
+
+.quick-attendance-link-note {
+  margin: 0;
+  max-width: 260px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--color-text-secondary);
 }
 </style>

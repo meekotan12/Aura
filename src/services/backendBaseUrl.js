@@ -1,5 +1,8 @@
-const DEFAULT_API_BASE_URL = '/__backend__'
+import { Capacitor } from '@capacitor/core'
+
+const DEFAULT_WEB_API_BASE_URL = '/__backend__'
 const DEFAULT_API_TIMEOUT_MS = 15000
+const DEFAULT_NATIVE_API_BASE_URL = 'https://backend-api-production-32e5.up.railway.app'
 
 function getRuntimeConfig() {
   if (typeof window === 'undefined') return {}
@@ -17,9 +20,18 @@ function readFirstDefinedString(values = []) {
   return ''
 }
 
+function readFirstAbsoluteHttpUrl(values = []) {
+  for (const value of values) {
+    const normalized = String(value ?? '').trim()
+    if (/^https?:\/\//i.test(normalized)) return normalized
+  }
+
+  return ''
+}
+
 function normalizeApiBaseUrl(value = '') {
   const normalized = String(value || '').trim().replace(/\/+$/, '')
-  if (!normalized) return DEFAULT_API_BASE_URL
+  if (!normalized) return DEFAULT_WEB_API_BASE_URL
 
   try {
     const url = new URL(normalized)
@@ -44,7 +56,27 @@ function getBrowserOrigin() {
   return 'http://localhost:5173'
 }
 
+function resolveNativeApiBaseUrl(baseUrl = '') {
+  const runtimeConfig = getRuntimeConfig()
+  const nativeUrl = readFirstAbsoluteHttpUrl([
+    baseUrl,
+    runtimeConfig.nativeApiBaseUrl,
+    runtimeConfig.apiBaseUrl,
+    runtimeConfig.backendBaseUrl,
+    runtimeConfig.backendOrigin,
+    import.meta.env.VITE_NATIVE_API_BASE_URL,
+    import.meta.env.VITE_BACKEND_PROXY_TARGET,
+    import.meta.env.VITE_API_BASE_URL,
+  ])
+
+  return normalizeApiBaseUrl(nativeUrl || DEFAULT_NATIVE_API_BASE_URL)
+}
+
 export function resolveApiBaseUrl(baseUrl = '') {
+  if (Capacitor.isNativePlatform()) {
+    return resolveNativeApiBaseUrl(baseUrl)
+  }
+
   const runtimeConfig = getRuntimeConfig()
   return normalizeApiBaseUrl(readFirstDefinedString([
     baseUrl,

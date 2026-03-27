@@ -183,6 +183,7 @@ import {
   mapGovernanceStudentCandidateToCouncilCandidate,
   mapUiPermissionIdsToBackend,
 } from '@/services/studentCouncilManagement.js'
+import { resolvePreferredGovernanceUnit } from '@/services/governanceScope.js'
 
 const router = useRouter()
 const { apiBaseUrl } = useDashboardSession()
@@ -268,11 +269,12 @@ async function loadUnit(url) {
   const token = localStorage.getItem('aura_token') || ''
   try {
     const access = await import('@/services/backendApi.js').then((m) => m.getGovernanceAccess(url, token))
-    const units = Array.isArray(access?.units) ? access.units : []
-    const ssg = units.find((u) => String(u?.unit_type || '').toUpperCase() === 'SSG')
-    if (!ssg) { loadError.value = 'No governance unit found.'; return }
-    governanceUnitId.value = ssg.governance_unit_id
-    const detail = await getGovernanceUnitDetail(url, token, ssg.governance_unit_id)
+    const governanceUnit = resolvePreferredGovernanceUnit(access, {
+      requiredPermissionCode: 'manage_members',
+    })
+    if (!governanceUnit) { loadError.value = 'No governance unit found.'; return }
+    governanceUnitId.value = governanceUnit.governance_unit_id
+    const detail = await getGovernanceUnitDetail(url, token, governanceUnit.governance_unit_id)
     members.value = (detail?.members || []).map(mapGovernanceMemberToCouncilMember)
   } catch (e) {
     loadError.value = e?.message || 'Unable to load members.'

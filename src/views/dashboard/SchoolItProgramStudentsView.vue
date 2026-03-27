@@ -149,8 +149,9 @@
                 <button
                   class="school-it-program-students__icon-button"
                   type="button"
+                  :disabled="student.isMutating || isSavingEditedStudent"
                   aria-label="Edit student"
-                  @click="editStudent(student)"
+                  @click="openEditStudentSheet(student)"
                 >
                   <Pencil :size="18" />
                 </button>
@@ -310,22 +311,11 @@
                   </option>
                 </select>
               </label>
-
-              <label class="school-it-program-students__field">
-                <span class="school-it-program-students__field-label">Password</span>
-                <input
-                  v-model="studentDraft.password"
-                  class="school-it-program-students__field-input"
-                  type="password"
-                  name="student_password"
-                  autocomplete="new-password"
-                  placeholder="Leave blank to auto-generate"
-                >
-              </label>
             </div>
 
             <p class="school-it-program-students__sheet-note">
-              The backend creates the student account first, then attaches the student profile to the current college and program.
+              The backend creates the student account, links the student to this college and program,
+              generates a temporary password, and sends that password through the welcome email.
             </p>
 
             <p
@@ -352,6 +342,182 @@
                 :disabled="addStudentSubmitDisabled"
               >
                 {{ isSavingStudent ? 'Adding Student...' : 'Add Student' }}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </Transition>
+
+    <Transition name="school-it-program-students-sheet">
+      <div
+        v-if="isEditStudentSheetOpen"
+        class="school-it-program-students__sheet-backdrop"
+        @click.self="closeEditStudentSheet"
+      >
+        <section class="school-it-program-students__sheet">
+          <header class="school-it-program-students__sheet-header">
+            <div>
+              <h2 class="school-it-program-students__sheet-title">Edit Student</h2>
+              <p class="school-it-program-students__sheet-copy">
+                Campus Admin can update the student's account info, student ID, year level,
+                college, and program from this screen.
+              </p>
+            </div>
+
+            <button
+              class="school-it-program-students__sheet-close"
+              type="button"
+              aria-label="Close edit student form"
+              @click="closeEditStudentSheet"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+
+          <form class="school-it-program-students__form" @submit.prevent="handleEditStudent">
+            <div class="school-it-program-students__form-grid">
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">First Name</span>
+                <input
+                  v-model="editStudentDraft.firstName"
+                  class="school-it-program-students__field-input"
+                  type="text"
+                  name="edit_student_first_name"
+                  autocomplete="given-name"
+                  placeholder="e.g., Juan"
+                >
+              </label>
+
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">Last Name</span>
+                <input
+                  v-model="editStudentDraft.lastName"
+                  class="school-it-program-students__field-input"
+                  type="text"
+                  name="edit_student_last_name"
+                  autocomplete="family-name"
+                  placeholder="e.g., Dela Cruz"
+                >
+              </label>
+
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">Middle Name</span>
+                <input
+                  v-model="editStudentDraft.middleName"
+                  class="school-it-program-students__field-input"
+                  type="text"
+                  name="edit_student_middle_name"
+                  autocomplete="additional-name"
+                  placeholder="Optional"
+                >
+              </label>
+
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">Student ID</span>
+                <input
+                  v-model="editStudentDraft.studentId"
+                  class="school-it-program-students__field-input"
+                  type="text"
+                  name="edit_student_id"
+                  autocomplete="off"
+                  placeholder="e.g., CPE-2026-001"
+                >
+              </label>
+
+              <label class="school-it-program-students__field school-it-program-students__field--wide">
+                <span class="school-it-program-students__field-label">Email</span>
+                <input
+                  v-model="editStudentDraft.email"
+                  class="school-it-program-students__field-input"
+                  type="email"
+                  name="edit_student_email"
+                  autocomplete="email"
+                  placeholder="student@example.com"
+                >
+              </label>
+
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">Year Level</span>
+                <select
+                  v-model="editStudentDraft.yearLevel"
+                  class="school-it-program-students__field-input school-it-program-students__field-input--select"
+                  name="edit_student_year_level"
+                >
+                  <option value="">Select year</option>
+                  <option v-for="year in yearLevelOptions" :key="year" :value="String(year)">
+                    Year {{ year }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="school-it-program-students__field">
+                <span class="school-it-program-students__field-label">College</span>
+                <select
+                  v-model="editStudentDraft.departmentId"
+                  class="school-it-program-students__field-input school-it-program-students__field-input--select"
+                  name="edit_student_department"
+                >
+                  <option value="">Select college</option>
+                  <option
+                    v-for="department in normalizedDepartments"
+                    :key="department.id"
+                    :value="String(department.id)"
+                  >
+                    {{ department.name }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="school-it-program-students__field school-it-program-students__field--wide">
+                <span class="school-it-program-students__field-label">Program</span>
+                <select
+                  v-model="editStudentDraft.programId"
+                  class="school-it-program-students__field-input school-it-program-students__field-input--select"
+                  name="edit_student_program"
+                  :disabled="!editStudentDraft.departmentId"
+                >
+                  <option value="">Select program</option>
+                  <option
+                    v-for="program in availableProgramsForEditDraft"
+                    :key="program.id"
+                    :value="String(program.id)"
+                  >
+                    {{ program.name }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <p class="school-it-program-students__sheet-note">
+              Password changes are not part of the backend student edit routes. This screen updates
+              the user account and student profile fields that Campus Admin is allowed to edit.
+            </p>
+
+            <p
+              v-if="editSheetMessage"
+              class="school-it-program-students__sheet-feedback"
+              :class="{ 'school-it-program-students__sheet-feedback--error': editSheetTone === 'error' }"
+            >
+              {{ editSheetMessage }}
+            </p>
+
+            <div class="school-it-program-students__sheet-actions">
+              <button
+                class="school-it-program-students__sheet-secondary"
+                type="button"
+                :disabled="isSavingEditedStudent"
+                @click="closeEditStudentSheet"
+              >
+                Cancel
+              </button>
+
+              <button
+                class="school-it-program-students__sheet-primary"
+                type="submit"
+                :disabled="editStudentSubmitDisabled"
+              >
+                {{ isSavingEditedStudent ? 'Saving...' : 'Save Changes' }}
               </button>
             </div>
           </form>
@@ -405,7 +571,7 @@
 
               <div class="school-it-program-students__success-row">
                 <span class="school-it-program-students__success-label">Student ID</span>
-                <strong class="school-it-program-students__success-value">{{ createdStudentSummary.studentId }}</strong>
+                <strong class="school-it-program-students__success-value">{{ createdStudentSummary.studentIdValue }}</strong>
               </div>
 
               <div class="school-it-program-students__success-row">
@@ -416,9 +582,9 @@
               </div>
 
               <div class="school-it-program-students__success-row">
-                <span class="school-it-program-students__success-label">{{ createdStudentSummary.passwordLabel }}</span>
+                <span class="school-it-program-students__success-label">Credential Delivery</span>
                 <strong class="school-it-program-students__success-value school-it-program-students__success-value--break">
-                  {{ createdStudentSummary.passwordValue }}
+                  {{ createdStudentSummary.deliveryValue }}
                 </strong>
               </div>
             </div>
@@ -453,7 +619,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ChevronDown, Pencil, Plus, Search, Trash2, X } from 'lucide-vue-next'
 import SchoolItTopHeader from '@/components/dashboard/SchoolItTopHeader.vue'
 import { schoolItPreviewData } from '@/data/schoolItPreview.js'
@@ -463,10 +629,10 @@ import { usePreviewTheme } from '@/composables/usePreviewTheme.js'
 import { useSchoolItWorkspaceData } from '@/composables/useSchoolItWorkspaceData.js'
 import {
   BackendApiError,
-  createStudentProfile,
-  createUser,
+  createStudentAccount,
   deleteUser,
-  getUsers,
+  updateStudentProfile,
+  updateUser,
 } from '@/services/backendApi.js'
 import { createSearchFieldAttrs } from '@/services/searchFieldAttrs.js'
 import { filterWorkspaceEntitiesBySchool } from '@/services/workspaceScope.js'
@@ -489,27 +655,32 @@ const sortOptions = [
 const yearLevelOptions = [1, 2, 3, 4, 5]
 
 const route = useRoute()
-const router = useRouter()
 const searchQuery = ref('')
 const studentSearchInputAttrs = createSearchFieldAttrs('school-it-student-search')
 const sortMode = ref(sortOptions[0].id)
 const isSortMenuOpen = ref(false)
 const isAddStudentSheetOpen = ref(false)
 const isSavingStudent = ref(false)
+const isEditStudentSheetOpen = ref(false)
+const isSavingEditedStudent = ref(false)
 const feedbackMessage = ref('')
 const feedbackDetail = ref('')
 const feedbackTone = ref('info')
 const sheetMessage = ref('')
 const sheetTone = ref('info')
+const editSheetMessage = ref('')
+const editSheetTone = ref('info')
 const createdStudentSummary = ref(null)
 const mutatingStudentIds = ref([])
 const highlightedStudentId = ref(null)
-const studentRowRefs = ref(new Map())
+const studentRowRefs = new Map()
 const isSelectingSearchResult = ref(false)
 const previewUsersSnapshot = ref(
   Array.isArray(schoolItPreviewData.users) ? schoolItPreviewData.users.map((user) => ({ ...user })) : []
 )
 const studentDraft = ref(createEmptyStudentDraft())
+const editingStudent = ref(null)
+const editStudentDraft = ref(createEmptyEditStudentDraft())
 
 const { logout } = useAuth()
 const { currentUser, schoolSettings, apiBaseUrl } = useDashboardSession()
@@ -536,11 +707,13 @@ const schoolId = computed(() => Number(activeUser.value?.school_id ?? activeScho
 const filteredDepartments = computed(() => filterWorkspaceEntitiesBySchool(activeDepartments.value, schoolId.value))
 const filteredPrograms = computed(() => filterWorkspaceEntitiesBySchool(activePrograms.value, schoolId.value))
 const filteredUsers = computed(() => filterWorkspaceEntitiesBySchool(activeUsers.value, schoolId.value))
-const studentUsers = computed(() => filteredUsers.value.filter(isStudentUser))
+const normalizedDepartments = computed(() => filteredDepartments.value.filter(isWorkspaceRecord))
+const normalizedPrograms = computed(() => filteredPrograms.value.filter(isWorkspaceRecord))
+const normalizedUsers = computed(() => filteredUsers.value.filter(isWorkspaceRecord))
+const studentUsers = computed(() => normalizedUsers.value.filter(isStudentUser))
 const departmentsStatus = computed(() => workspaceStatuses.value?.departments || 'idle')
 const programsStatus = computed(() => workspaceStatuses.value?.programs || 'idle')
 const usersStatus = computed(() => workspaceStatuses.value?.users || 'idle')
-const settingsRouteName = computed(() => props.preview ? 'PreviewSchoolItSettings' : 'SchoolItSettings')
 const avatarUrl = computed(() => activeUser.value?.avatar_url || '')
 const displayName = computed(() => {
   const first = activeUser.value?.first_name || ''
@@ -551,11 +724,11 @@ const displayName = computed(() => {
 const initials = computed(() => buildInitials(displayName.value))
 
 const selectedDepartment = computed(() => (
-  filteredDepartments.value.find((department) => Number(department.id) === departmentId.value) || null
+  normalizedDepartments.value.find((department) => Number(department?.id) === departmentId.value) || null
 ))
 
 const selectedProgram = computed(() => {
-  const match = filteredPrograms.value.find((program) => Number(program.id) === programId.value)
+  const match = normalizedPrograms.value.find((program) => Number(program?.id) === programId.value)
   if (!match) return null
 
   const programDepartmentIds = Array.isArray(match.department_ids) ? match.department_ids.map(Number) : []
@@ -583,14 +756,21 @@ const programStudents = computed(() => (
       id: Number(user.id),
       userId: Number(user.id),
       firstName: String(user.first_name || '').trim(),
+      middleName: String(user.middle_name || '').trim(),
       lastName: String(user.last_name || '').trim(),
+      email: String(user.email || '').trim(),
       fullName: [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email || 'Student',
       studentId: String(user?.student_profile?.student_id || user.id || ''),
       profileId: Number(user?.student_profile?.id),
       profile: user?.student_profile || null,
+      departmentId: normalizeRouteId(user?.student_profile?.department_id),
+      programId: normalizeRouteId(user?.student_profile?.program_id),
+      yearLevel: normalizeRouteId(user?.student_profile?.year_level),
+      sourceUser: user,
       searchText: [
         user?.student_profile?.student_id,
         user.first_name,
+        user.middle_name,
         user.last_name,
         user.email,
       ].filter(Boolean).join(' ').toLowerCase(),
@@ -630,6 +810,20 @@ const addStudentSubmitDisabled = computed(() => (
   || !selectedProgram.value
   || !selectedDepartment.value
   || !canSubmitStudentDraft(studentDraft.value)
+))
+const availableProgramsForEditDraft = computed(() => {
+  const normalizedDepartmentId = normalizeRouteId(editStudentDraft.value.departmentId)
+  if (normalizedDepartmentId == null) return []
+
+  return normalizedPrograms.value.filter((program) => {
+    const departmentIds = Array.isArray(program?.department_ids) ? program.department_ids.map(Number) : []
+    return !departmentIds.length || departmentIds.includes(normalizedDepartmentId)
+  })
+})
+const editStudentSubmitDisabled = computed(() => (
+  isSavingEditedStudent.value
+  || !editingStudent.value
+  || !canSubmitEditStudentDraft(editStudentDraft.value)
 ))
 const searchResults = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -673,8 +867,30 @@ watch(isAddStudentSheetOpen, (open) => {
   }
 })
 
+watch(isEditStudentSheetOpen, (open) => {
+  if (!open) {
+    resetEditStudentDraft()
+  }
+})
+
+watch(() => editStudentDraft.value.departmentId, (departmentIdValue) => {
+  const normalizedDepartmentId = normalizeRouteId(departmentIdValue)
+  if (normalizedDepartmentId == null) {
+    editStudentDraft.value.programId = ''
+    return
+  }
+
+  const hasMatchingProgram = availableProgramsForEditDraft.value.some((program) => (
+    Number(program?.id) === normalizeRouteId(editStudentDraft.value.programId)
+  ))
+  if (!hasMatchingProgram) {
+    editStudentDraft.value.programId = ''
+  }
+})
+
 onBeforeUnmount(() => {
   isSortMenuOpen.value = false
+  studentRowRefs.clear()
 })
 
 function normalizeRouteId(value) {
@@ -686,6 +902,10 @@ function buildInitials(value) {
   const parts = String(value || '').split(' ').filter(Boolean)
   if (parts.length >= 2) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
   return String(value || '').slice(0, 2).toUpperCase()
+}
+
+function isWorkspaceRecord(value) {
+  return Boolean(value) && typeof value === 'object'
 }
 
 function isStudentUser(user) {
@@ -706,9 +926,21 @@ function createEmptyStudentDraft() {
     middleName: '',
     lastName: '',
     email: '',
-    password: '',
     studentId: '',
     yearLevel: '',
+  }
+}
+
+function createEmptyEditStudentDraft() {
+  return {
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    email: '',
+    studentId: '',
+    yearLevel: '',
+    departmentId: '',
+    programId: '',
   }
 }
 
@@ -716,6 +948,13 @@ function resetStudentDraft() {
   studentDraft.value = createEmptyStudentDraft()
   sheetMessage.value = ''
   sheetTone.value = 'info'
+}
+
+function resetEditStudentDraft() {
+  editingStudent.value = null
+  editStudentDraft.value = createEmptyEditStudentDraft()
+  editSheetMessage.value = ''
+  editSheetTone.value = 'info'
 }
 
 function closeCreatedStudentDialog() {
@@ -739,6 +978,20 @@ function canSubmitStudentDraft(draft) {
   )
 }
 
+function canSubmitEditStudentDraft(draft) {
+  const email = String(draft?.email || '').trim()
+  return (
+    String(draft?.firstName || '').trim().length > 0
+    && String(draft?.lastName || '').trim().length > 0
+    && String(draft?.studentId || '').trim().length > 0
+    && String(draft?.yearLevel || '').trim().length > 0
+    && String(draft?.departmentId || '').trim().length > 0
+    && String(draft?.programId || '').trim().length > 0
+    && email.length > 0
+    && /\S+@\S+\.\S+/.test(email)
+  )
+}
+
 function openAddStudentSheet() {
   if (!selectedProgram.value) return
   resetStudentDraft()
@@ -752,20 +1005,236 @@ function closeAddStudentSheet(force = false) {
   isAddStudentSheetOpen.value = false
 }
 
-function buildStudentSnapshot(user) {
-  return activeUsers.value
-    .map((entry) => Number(entry?.id) === Number(user?.id) ? user : entry)
-    .concat(activeUsers.value.some((entry) => Number(entry?.id) === Number(user?.id)) ? [] : [user])
-    .sort((left, right) => String(left?.last_name || '').localeCompare(String(right?.last_name || '')))
+function openEditStudentSheet(student) {
+  if (!student) return
+
+  editingStudent.value = student
+  editStudentDraft.value = {
+    firstName: student.firstName || '',
+    middleName: student.middleName || '',
+    lastName: student.lastName || '',
+    email: student.email || '',
+    studentId: student.studentId || '',
+    yearLevel: student.yearLevel != null ? String(student.yearLevel) : '',
+    departmentId: student.departmentId != null ? String(student.departmentId) : '',
+    programId: student.programId != null ? String(student.programId) : '',
+  }
+  editSheetMessage.value = ''
+  editSheetTone.value = 'info'
+  isSortMenuOpen.value = false
+  isEditStudentSheetOpen.value = true
 }
 
-function applyCreatedStudent(user) {
+function closeEditStudentSheet(force = false) {
+  if (isSavingEditedStudent.value && !force) return
+  isEditStudentSheetOpen.value = false
+}
+
+function sortUsersByLastName(items) {
+  return [...items].sort((left, right) => (
+    String(left?.last_name || '').localeCompare(String(right?.last_name || ''))
+    || String(left?.first_name || '').localeCompare(String(right?.first_name || ''))
+    || String(left?.email || '').localeCompare(String(right?.email || ''))
+  ))
+}
+
+function buildStudentSnapshot(user) {
+  const nextUsers = activeUsers.value
+    .map((entry) => Number(entry?.id) === Number(user?.id) ? user : entry)
+    .concat(activeUsers.value.some((entry) => Number(entry?.id) === Number(user?.id)) ? [] : [user])
+
+  return sortUsersByLastName(nextUsers)
+}
+
+function buildDeletedStudentSnapshot(userId) {
+  return sortUsersByLastName(
+    activeUsers.value.filter((entry) => Number(entry?.id) !== Number(userId))
+  )
+}
+
+function buildOptimisticCreatedStudentRecord(createdUser, createdStudent, draft, options = {}) {
+  const normalizedUserId = Number(createdStudent?.id ?? createdStudent?.user_id ?? createdUser?.id)
+  const normalizedSchoolId = Number(
+    createdStudent?.school_id
+    ?? createdUser?.school_id
+    ?? schoolId.value
+  )
+  const useDraftStudentIdFallback = options.useDraftStudentIdFallback !== false
+
+  return {
+    ...createdUser,
+    ...createdStudent,
+    id: normalizedUserId,
+    email: createdUser?.email || draft.email,
+    first_name: createdUser?.first_name || draft.firstName,
+    middle_name: createdUser?.middle_name ?? (draft.middleName || null),
+    last_name: createdUser?.last_name || draft.lastName,
+    school_id: Number.isFinite(normalizedSchoolId) ? normalizedSchoolId : null,
+    is_active: createdUser?.is_active !== false,
+    created_at: createdUser?.created_at || new Date().toISOString(),
+    roles: Array.isArray(createdUser?.roles) && createdUser.roles.length
+      ? createdUser.roles
+      : [{ role: { name: 'student' } }],
+    student_profile: {
+      ...(createdUser?.student_profile || {}),
+      ...(createdStudent?.student_profile || {}),
+      id: Number(createdStudent?.student_profile?.id ?? createdStudent?.id ?? normalizedUserId),
+      user_id: normalizedUserId,
+      school_id: Number.isFinite(normalizedSchoolId) ? normalizedSchoolId : null,
+      student_id: String(
+        createdStudent?.student_profile?.student_id
+        ?? createdStudent?.student_id
+        ?? createdUser?.student_profile?.student_id
+        ?? (useDraftStudentIdFallback ? draft.studentId : '')
+      ),
+      department_id: Number(
+        createdStudent?.student_profile?.department_id
+        ?? createdStudent?.department_id
+        ?? selectedDepartment.value?.id
+      ),
+      program_id: Number(
+        createdStudent?.student_profile?.program_id
+        ?? createdStudent?.program_id
+        ?? selectedProgram.value?.id
+      ),
+      year_level: Number(
+        createdStudent?.student_profile?.year_level
+        ?? createdStudent?.year_level
+        ?? draft.yearLevel
+      ),
+      attendances: Array.isArray(createdStudent?.student_profile?.attendances)
+        ? createdStudent.student_profile.attendances
+        : [],
+      is_face_registered: Boolean(createdStudent?.student_profile?.is_face_registered),
+      registration_complete: Boolean(createdStudent?.student_profile?.registration_complete),
+    },
+  }
+}
+
+function applyStudentSnapshot(user) {
   const nextUsers = buildStudentSnapshot(user)
   if (props.preview) {
     previewUsersSnapshot.value = nextUsers
     return
   }
   setUsersSnapshot(nextUsers)
+}
+
+function applyCreatedStudent(user) {
+  applyStudentSnapshot(user)
+}
+
+function buildOptimisticUpdatedStudentRecord(student, draft) {
+  const sourceUser = student?.sourceUser || {}
+  const normalizedDepartmentId = normalizeRouteId(draft?.departmentId)
+  const normalizedProgramId = normalizeRouteId(draft?.programId)
+  const normalizedYearLevel = normalizeRouteId(draft?.yearLevel)
+
+  return {
+    ...sourceUser,
+    id: Number(student?.userId ?? sourceUser?.id),
+    email: String(draft?.email || '').trim(),
+    first_name: String(draft?.firstName || '').trim(),
+    middle_name: String(draft?.middleName || '').trim() || null,
+    last_name: String(draft?.lastName || '').trim(),
+    roles: Array.isArray(sourceUser?.roles) ? sourceUser.roles : [{ role: { name: 'student' } }],
+    student_profile: {
+      ...(sourceUser?.student_profile || {}),
+      id: Number(student?.profileId ?? sourceUser?.student_profile?.id),
+      user_id: Number(student?.userId ?? sourceUser?.id),
+      school_id: Number(sourceUser?.student_profile?.school_id ?? sourceUser?.school_id ?? schoolId.value),
+      student_id: String(draft?.studentId || '').trim().toUpperCase(),
+      department_id: normalizedDepartmentId,
+      program_id: normalizedProgramId,
+      year_level: normalizedYearLevel,
+      attendances: Array.isArray(sourceUser?.student_profile?.attendances)
+        ? sourceUser.student_profile.attendances
+        : [],
+      is_face_registered: Boolean(sourceUser?.student_profile?.is_face_registered),
+      registration_complete: Boolean(sourceUser?.student_profile?.registration_complete),
+    },
+  }
+}
+
+function resolveSelectedProgramNameById(targetProgramId) {
+  return normalizedPrograms.value.find((program) => Number(program?.id) === Number(targetProgramId))?.name || 'the selected program'
+}
+
+async function handleEditStudent() {
+  if (editStudentSubmitDisabled.value || !editingStudent.value) return
+
+  const activeStudent = editingStudent.value
+  const token = localStorage.getItem('aura_token') || ''
+  const draft = {
+    firstName: String(editStudentDraft.value.firstName || '').trim(),
+    middleName: String(editStudentDraft.value.middleName || '').trim(),
+    lastName: String(editStudentDraft.value.lastName || '').trim(),
+    email: String(editStudentDraft.value.email || '').trim(),
+    studentId: String(editStudentDraft.value.studentId || '').trim().toUpperCase(),
+    yearLevel: normalizeRouteId(editStudentDraft.value.yearLevel),
+    departmentId: normalizeRouteId(editStudentDraft.value.departmentId),
+    programId: normalizeRouteId(editStudentDraft.value.programId),
+  }
+
+  editSheetMessage.value = ''
+  editSheetTone.value = 'info'
+  isSavingEditedStudent.value = true
+
+  try {
+    if (props.preview) {
+      const previewUser = buildOptimisticUpdatedStudentRecord(activeStudent, draft)
+      applyStudentSnapshot(previewUser)
+      closeEditStudentSheet(true)
+      feedbackTone.value = 'info'
+      feedbackMessage.value = `${draft.firstName} ${draft.lastName} was updated in preview mode.`
+      feedbackDetail.value = ''
+      if (draft.programId === programId.value) {
+        await highlightCreatedStudent(previewUser.id)
+      }
+      return
+    }
+
+    let updatedUser = activeStudent.sourceUser || null
+
+    updatedUser = await updateUser(apiBaseUrl.value, token, activeStudent.userId, {
+      email: draft.email,
+      first_name: draft.firstName,
+      middle_name: draft.middleName || null,
+      last_name: draft.lastName,
+    })
+
+    updatedUser = await updateStudentProfile(apiBaseUrl.value, token, activeStudent.profileId, {
+      student_id: draft.studentId,
+      department_id: draft.departmentId,
+      program_id: draft.programId,
+      year_level: draft.yearLevel,
+    })
+
+    applyStudentSnapshot(updatedUser)
+    refreshSchoolItWorkspaceData().catch(() => {})
+    closeEditStudentSheet(true)
+
+    const movedOutsideCurrentProgram = Number(draft.programId) !== Number(programId.value)
+    feedbackTone.value = 'info'
+    feedbackMessage.value = `${draft.firstName} ${draft.lastName} was updated successfully.`
+    feedbackDetail.value = movedOutsideCurrentProgram
+      ? `${draft.firstName} ${draft.lastName} is now assigned to ${resolveSelectedProgramNameById(draft.programId)} and was removed from this program list.`
+      : ''
+
+    if (!movedOutsideCurrentProgram) {
+      await highlightCreatedStudent(updatedUser?.id ?? activeStudent.userId)
+    } else {
+      highlightedStudentId.value = null
+    }
+  } catch (error) {
+    if (!props.preview) {
+      refreshSchoolItWorkspaceData().catch(() => {})
+    }
+    editSheetTone.value = 'error'
+    editSheetMessage.value = resolveStudentUpdateError(error)
+  } finally {
+    isSavingEditedStudent.value = false
+  }
 }
 
 async function handleAddStudent() {
@@ -782,7 +1251,6 @@ async function handleAddStudent() {
     middleName: studentDraft.value.middleName.trim(),
     lastName: studentDraft.value.lastName.trim(),
     email: studentDraft.value.email.trim(),
-    password: studentDraft.value.password,
     studentId: studentDraft.value.studentId.trim().toUpperCase(),
     yearLevel: normalizeRouteId(studentDraft.value.yearLevel),
   }
@@ -821,127 +1289,80 @@ async function handleAddStudent() {
       return
     }
 
-    const FAST_TIMEOUT_MS = 8000
-    let timeoutId
-    const operationTimeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('TIMEOUT')), FAST_TIMEOUT_MS)
-    })
-    operationTimeout.catch(() => {}) // Prevent unhandled rejection warning if timeout fires after early success
-
     let createdUser = null
     let createdStudent = null
+    let studentIdSaveError = null
 
-    try {
-      // Step 1: Create the User account
-      sheetMessage.value = 'Creating user account...'
-      createdUser = await Promise.race([
-        createUser(apiBaseUrl.value, token, {
-          email: draft.email,
-          first_name: draft.firstName,
-          middle_name: draft.middleName || null,
-          last_name: draft.lastName,
-          password: draft.password || null,
-          roles: ['student'],
-        }),
-        operationTimeout
-      ])
+    sheetMessage.value = 'Creating student account and sending welcome email...'
+    createdUser = await createStudentAccount(apiBaseUrl.value, token, {
+      email: draft.email,
+      first_name: draft.firstName,
+      middle_name: draft.middleName || null,
+      last_name: draft.lastName,
+      department_id: Number(selectedDepartment.value.id),
+      program_id: Number(selectedProgram.value.id),
+      year_level: draft.yearLevel,
+    })
+    createdStudent = createdUser
 
-      // Step 2: Attach the Student Profile
-      sheetMessage.value = 'Attaching student profile...'
-      createdStudent = await Promise.race([
-        createStudentProfile(apiBaseUrl.value, token, {
-          user_id: Number(createdUser.id),
+    const createdProfileId = Number(createdUser?.student_profile?.id)
+    if (draft.studentId && Number.isFinite(createdProfileId)) {
+      try {
+        sheetMessage.value = 'Saving student ID...'
+        createdStudent = await updateStudentProfile(apiBaseUrl.value, token, createdProfileId, {
           student_id: draft.studentId,
-          department_id: Number(selectedDepartment.value.id),
-          program_id: Number(selectedProgram.value.id),
-          year_level: draft.yearLevel,
-        }),
-        operationTimeout
-      ])
-    } catch (error) {
-      if (error?.message === 'TIMEOUT' || isRecoverableStudentCreationTimeout(error)) {
-        // If it timed out, but we created the user, we assume the backend is just slow and will finish.
-        // If we didn't even create the user, then it's a real failure.
-        if (!createdUser) {
-          throw new BackendApiError('The backend is taking too long to respond. Please try again later.', { status: 0 })
-        }
-        
-        // We have the user, but the profile attachment timed out. We optimistically finish.
-        createdStudent = {
-          id: createdUser.id,
-          user_id: createdUser.id,
-          school_id: schoolId.value,
-          student_id: draft.studentId,
-          department_id: selectedDepartment.value.id,
-          program_id: selectedProgram.value.id,
-          year_level: draft.yearLevel,
-        }
-        
-        await finalizeCreatedStudentCreation({ createdUser, createdStudent, recoveredFromPendingResponse: true }, draft)
-        closeAddStudentSheet(true)
-        return
+        })
+      } catch (error) {
+        studentIdSaveError = error
       }
-      throw error
+    } else if (draft.studentId) {
+      studentIdSaveError = new BackendApiError(
+        'The student account was created, but Aura could not confirm the student profile needed to save the student ID.',
+        { status: 0 },
+      )
     }
 
-    await finalizeCreatedStudentCreation({ createdUser, createdStudent, recoveredFromPendingResponse: false }, draft)
+    await finalizeCreatedStudentCreation({ createdUser, createdStudent, studentIdSaveError }, draft)
     closeAddStudentSheet(true)
-    await highlightCreatedStudent(createdStudent?.id)
+    await highlightCreatedStudent(createdStudent?.id ?? createdUser?.id)
   } catch (error) {
     sheetTone.value = 'error'
     sheetMessage.value = resolveStudentCreationError(error)
   } finally {
-    clearTimeout(timeoutId)
     isSavingStudent.value = false
   }
 }
 
-
-
-function isRecoverableStudentCreationTimeout(error) {
-  return (
-    error instanceof BackendApiError &&
-    Number(error.status) === 0 &&
-    /too long to respond|Unable to reach the API/i.test(String(error.message || ''))
-  )
-}
-
 async function finalizeCreatedStudentCreation(creationOutcome, draft) {
-  const generatedTemporaryPassword = String(creationOutcome?.createdUser?.generated_temporary_password || '').trim()
-  const recoveredFromPendingResponse = Boolean(creationOutcome?.recoveredFromPendingResponse)
+  const studentIdSaveError = creationOutcome?.studentIdSaveError ?? null
+  const resolvedCreatedStudent = buildOptimisticCreatedStudentRecord(
+    creationOutcome?.createdUser,
+    creationOutcome?.createdStudent,
+    draft,
+    {
+      useDraftStudentIdFallback: !studentIdSaveError,
+    },
+  )
+  const studentIdValue = String(resolvedCreatedStudent?.student_profile?.student_id || '').trim() || 'Pending follow-up'
+  const studentIdFollowUpMessage = studentIdSaveError
+    ? `${resolveStudentUpdateError(studentIdSaveError)} You can finish the student ID from Edit Student without recreating the account.`
+    : ''
+  const emailStatus = studentIdFollowUpMessage
+    ? `The backend created the account and sent the temporary password by welcome email, but the requested student ID still needs follow-up. ${studentIdFollowUpMessage}`
+    : 'The backend created the account and sent the generated temporary password to the student email address.'
 
-  let credentialNotice = ''
-  if (generatedTemporaryPassword) {
-    credentialNotice = `Temporary password: ${generatedTemporaryPassword}. If no email arrives, use this password to sign in.`
-  } else if (draft.password) {
-    credentialNotice = recoveredFromPendingResponse
-      ? 'The account was created successfully. Aura recovered it from the backend while the create request was still pending, so the account uses the password entered in the form.'
-      : 'The account uses the password entered in the form. Email delivery depends on backend SMTP settings.'
-  } else {
-    credentialNotice = recoveredFromPendingResponse
-      ? 'The account was created on the backend, but Aura did not receive the generated temporary password before the request stalled. If the email does not arrive, a manual password reset may be needed.'
-      : 'The backend created the account without returning a temporary password. If no email arrives, backend SMTP may still be unavailable.'
-  }
-
-  const passwordLabel = generatedTemporaryPassword ? 'Temporary Password' : 'Password'
-  const passwordValue = generatedTemporaryPassword || draft.password || 'Check the welcome email or reset the password manually'
-  const emailStatus = recoveredFromPendingResponse
-    ? 'Aura detected that the student was already created on the backend and completed the success flow from the live data. Email delivery is still handled by backend SMTP.'
-    : 'The backend is responsible for sending the welcome email. If no email arrives, the backend SMTP service may not be configured or may have failed silently.'
-
-  applyCreatedStudent(creationOutcome.createdStudent)
+  applyCreatedStudent(resolvedCreatedStudent)
   refreshSchoolItWorkspaceData().catch(() => {})
   feedbackTone.value = 'info'
   feedbackMessage.value = `${draft.firstName} ${draft.lastName} was added to ${selectedProgram.value.name}.`
-  feedbackDetail.value = credentialNotice
+  feedbackDetail.value = studentIdFollowUpMessage || 'The temporary password was delivered through the welcome email.'
   createdStudentSummary.value = {
     fullName: `${draft.firstName} ${draft.lastName}`.trim(),
-    studentId: draft.studentId,
+    studentIdValue,
     email: draft.email,
     departmentName: selectedDepartment.value.name,
     programName: selectedProgram.value.name,
-    passwordLabel,
-    passwordValue,
+    deliveryValue: 'Temporary password sent by email',
     emailStatus,
   }
 }
@@ -953,7 +1374,7 @@ function delay(ms) {
 }
 
 function resolveNextPreviewUserId() {
-  const existingIds = activeUsers.value
+  const existingIds = normalizedUsers.value
     .map((user) => Number(user?.id))
     .filter((id) => Number.isFinite(id))
   const maxId = existingIds.length ? Math.max(...existingIds) : 1000
@@ -961,13 +1382,14 @@ function resolveNextPreviewUserId() {
 }
 
 function setStudentRowRef(studentId, element) {
-  const nextMap = new Map(studentRowRefs.value)
+  const normalizedStudentId = Number(studentId)
+  if (!Number.isFinite(normalizedStudentId)) return
+
   if (element) {
-    nextMap.set(Number(studentId), element)
+    studentRowRefs.set(normalizedStudentId, element)
   } else {
-    nextMap.delete(Number(studentId))
+    studentRowRefs.delete(normalizedStudentId)
   }
-  studentRowRefs.value = nextMap
 }
 
 async function highlightCreatedStudent(studentId) {
@@ -977,8 +1399,7 @@ async function highlightCreatedStudent(studentId) {
   searchQuery.value = ''
   highlightedStudentId.value = normalizedStudentId
   await nextTick()
-  const row = studentRowRefs.value.get(normalizedStudentId)
-  row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  scrollStudentRowIntoView(normalizedStudentId)
 }
 
 async function handleSearchResult(student) {
@@ -986,8 +1407,7 @@ async function handleSearchResult(student) {
   highlightedStudentId.value = student.id
   searchQuery.value = ''
   await nextTick()
-  const row = studentRowRefs.value.get(Number(student.id))
-  row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  scrollStudentRowIntoView(Number(student.id))
   window.setTimeout(() => {
     isSelectingSearchResult.value = false
   }, 180)
@@ -996,7 +1416,9 @@ async function handleSearchResult(student) {
 async function deleteStudent(student) {
   if (student.isMutating) return
 
-  const confirmed = window.confirm(`Delete ${student.fullName}?`)
+  const confirmed = typeof window.confirm === 'function'
+    ? window.confirm(`Delete ${student.fullName}?`)
+    : true
   if (!confirmed) return
 
   mutatingStudentIds.value = [...mutatingStudentIds.value, student.id]
@@ -1004,9 +1426,7 @@ async function deleteStudent(student) {
   feedbackDetail.value = ''
 
   const previousUsers = [...activeUsers.value]
-  const nextUsers = activeUsers.value
-    .filter((user) => Number(user?.id) !== Number(student.userId))
-    .sort((left, right) => String(left?.last_name || '').localeCompare(String(right?.last_name || '')))
+  const nextUsers = buildDeletedStudentSnapshot(student.userId)
 
   if (props.preview) {
     previewUsersSnapshot.value = nextUsers
@@ -1041,15 +1461,10 @@ async function deleteStudent(student) {
   }
 }
 
-function editStudent(student) {
-  router.push({
-    name: settingsRouteName.value,
-    query: {
-      department: departmentId.value,
-      program: programId.value,
-      student: student.userId,
-    },
-  })
+function scrollStudentRowIntoView(studentId) {
+  const row = studentRowRefs.get(Number(studentId))
+  if (typeof row?.scrollIntoView !== 'function') return
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 function resolveStudentDeletionError(error) {
@@ -1066,6 +1481,30 @@ function resolveStudentDeletionError(error) {
   }
 
   return error.message || 'Unable to delete this student right now.'
+}
+
+function resolveStudentUpdateError(error) {
+  if (!(error instanceof BackendApiError)) {
+    return 'Unable to update this student right now.'
+  }
+
+  if (error.status === 400) {
+    return error.message || 'The backend rejected one of the updated student fields.'
+  }
+
+  if (error.status === 403) {
+    return 'This session is not allowed to edit this student right now.'
+  }
+
+  if (error.status === 404) {
+    return 'This student record could not be found on the backend anymore.'
+  }
+
+  if (error.status === 422) {
+    return 'Some student fields are invalid. Check the email, student ID, year level, college, and program.'
+  }
+
+  return error.message || 'Unable to update this student right now.'
 }
 
 function resolveStudentCreationError(error) {
@@ -1087,6 +1526,10 @@ function resolveStudentCreationError(error) {
 
   if (error.status === 422) {
     return 'Some student fields are invalid. Please check the email, student ID, and year level.'
+  }
+
+  if (error.status === 502) {
+    return error.message || 'The backend could not deliver the welcome email, so the student account was not created.'
   }
 
   return error.message || 'Unable to add this student right now.'

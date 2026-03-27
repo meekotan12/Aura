@@ -56,41 +56,92 @@ export const exposedAdminNavigationItems = [
 ]
 
 export const sgNavigationItems = [
-    { name: 'Home', route: '/dashboard', icon: House },
-    { name: 'Schedule', route: '/dashboard/schedule', icon: CalendarDays },
-    { name: 'Analytics', route: '/dashboard/analytics', icon: PieChart },
+    { name: 'Home', route: '/sg', icon: House },
+    { name: 'Events', route: '/sg/events', icon: CalendarDays },
+    { name: 'Members', route: '/sg/members', icon: UsersRound },
     { name: 'Profile', route: '/dashboard/profile', icon: UserRound },
 ]
 
 export const exposedSgNavigationItems = [
-    { name: 'Home', route: '/exposed/dashboard', icon: House },
-    { name: 'Schedule', route: '/exposed/dashboard/schedule', icon: CalendarDays },
-    { name: 'Analytics', route: '/exposed/dashboard/analytics', icon: PieChart },
+    { name: 'Home', route: '/exposed/sg', icon: House },
+    { name: 'Events', route: '/exposed/sg/events', icon: CalendarDays },
+    { name: 'Members', route: '/exposed/sg/members', icon: UsersRound },
     { name: 'Profile', route: '/exposed/dashboard/profile', icon: UserRound },
 ]
 
-export function getNavigationItemsForPath(path = '') {
+const NAVIGATION_CONTEXT_ITEMS = {
+    dashboard: dashboardNavigationItems,
+    dashboard_preview: exposedDashboardNavigationItems,
+    workspace: schoolItNavigationItems,
+    workspace_preview: exposedSchoolItNavigationItems,
+    admin: adminNavigationItems,
+    admin_preview: exposedAdminNavigationItems,
+    sg: sgNavigationItems,
+    sg_preview: exposedSgNavigationItems,
+}
+
+function normalizeNavigationContext(value = '') {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_')
+}
+
+function resolveNavigationContextFromPath(path = '') {
     const normalizedPath = String(path || '')
-    if (normalizedPath.startsWith('/exposed/sg')) {
-        return exposedSgNavigationItems
-    }
+
     if (normalizedPath.startsWith('/exposed/admin')) {
-        return exposedAdminNavigationItems
-    }
-    if (normalizedPath.startsWith('/exposed/dashboard')) {
-        return exposedDashboardNavigationItems
+        return 'admin_preview'
     }
     if (normalizedPath.startsWith('/exposed/workspace')) {
-        return exposedSchoolItNavigationItems
+        return 'workspace_preview'
     }
-    if (normalizedPath.startsWith('/sg')) {
-        return sgNavigationItems
+    if (normalizedPath.startsWith('/exposed/sg')) {
+        return 'dashboard_preview'
+    }
+    if (normalizedPath.startsWith('/exposed/dashboard')) {
+        return 'dashboard_preview'
     }
     if (normalizedPath.startsWith('/admin')) {
-        return adminNavigationItems
+        return 'admin'
     }
     if (normalizedPath.startsWith('/workspace')) {
-        return schoolItNavigationItems
+        return 'workspace'
     }
-    return dashboardNavigationItems
+    if (normalizedPath.startsWith('/sg')) {
+        return 'dashboard'
+    }
+
+    return 'dashboard'
+}
+
+export function getNavigationItemsForContext(context = '') {
+    const normalizedContext = normalizeNavigationContext(context)
+    return NAVIGATION_CONTEXT_ITEMS[normalizedContext] || dashboardNavigationItems
+}
+
+export function resolveNavigationContext(route = null) {
+    const matchedRecords = Array.isArray(route?.matched) ? [...route.matched].reverse() : []
+    const matchedContext = matchedRecords
+        .map((record) => normalizeNavigationContext(record?.meta?.primaryNavContext))
+        .find(Boolean)
+
+    if (matchedContext) {
+        return matchedContext
+    }
+
+    const metaContext = normalizeNavigationContext(route?.meta?.primaryNavContext)
+    if (metaContext) {
+        return metaContext
+    }
+
+    return resolveNavigationContextFromPath(route?.path || route || '')
+}
+
+export function getNavigationItemsForRoute(route = null) {
+    return getNavigationItemsForContext(resolveNavigationContext(route))
+}
+
+export function getNavigationItemsForPath(path = '') {
+    return getNavigationItemsForContext(resolveNavigationContextFromPath(path))
 }

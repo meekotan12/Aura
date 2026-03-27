@@ -154,7 +154,7 @@ import { Maximize2, Send } from 'lucide-vue-next'
 import { activeAuraLogo } from '@/config/theme.js'
 import { useChat } from '@/composables/useChat.js'
 import AuraChatWindow from '@/components/ui/AuraChatWindow.vue'
-import { getNavigationItemsForPath } from '@/components/navigation/navigationItems.js'
+import { getNavigationItemsForRoute } from '@/components/navigation/navigationItems.js'
 
 // ── Chat state from singleton composable ──────────────────
 const {
@@ -183,7 +183,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
 // ── Navigation ────────────────────────────────────────────
 const router = useRouter()
 const route  = useRoute()
-const navItems = computed(() => getNavigationItemsForPath(route.path))
+const navItems = computed(() => getNavigationItemsForRoute(route))
 const railHeight = computed(() => Math.max(380, 150 + (navItems.value.length * 58)))
 const navRailStyle = computed(() => ({
   '--nav-rail-height': `${railHeight.value}px`,
@@ -199,7 +199,9 @@ function isActive(item) {
     path === '/workspace' ||
     path === '/exposed/workspace' ||
     path === '/admin' ||
-    path === '/exposed/admin'
+    path === '/exposed/admin' ||
+    path === '/sg' ||
+    path === '/exposed/sg'
   ) {
     return route.path === path || route.path === `${path}/`
   }

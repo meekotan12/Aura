@@ -161,6 +161,18 @@
       </div>
     </div>
   </section>
+
+  <EventEditorSheet
+    :is-open="isEventEditorOpen"
+    :event="editingEvent"
+    title="Edit Event"
+    description="Update this event using the live backend event fields."
+    submit-label="Save Event"
+    :saving="isSavingEvent"
+    :error-message="eventEditorError"
+    @close="closeEventEditor"
+    @save="saveEventEdits"
+  />
 </template>
 
 <script setup>
@@ -168,11 +180,18 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight, Search, Pencil, Trash2, Settings } from 'lucide-vue-next'
 import SchoolItTopHeader from '@/components/dashboard/SchoolItTopHeader.vue'
+import EventEditorSheet from '@/components/events/EventEditorSheet.vue'
 import { useAuth } from '@/composables/useAuth.js'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { useStoredAuthMeta } from '@/composables/useStoredAuthMeta.js'
 import { schoolItPreviewData } from '@/data/schoolItPreview.js'
-import { getEvents, resolveApiBaseUrl, updateSchoolBranding } from '@/services/backendApi.js'
+import {
+  deleteEvent as deleteBackendEvent,
+  getEvents,
+  resolveApiBaseUrl,
+  updateEvent as updateBackendEvent,
+  updateSchoolBranding,
+} from '@/services/backendApi.js'
 
 const props = defineProps({
   preview: {
@@ -182,7 +201,12 @@ const props = defineProps({
 })
 
 const router = useRouter()
-const { currentUser, schoolSettings } = useDashboardSession()
+const {
+  currentUser,
+  schoolSettings,
+  initializeDashboardSession,
+  refreshSchoolSettings,
+} = useDashboardSession()
 const { logout } = useAuth()
 const authMeta = useStoredAuthMeta()
 
@@ -235,6 +259,9 @@ const initials = computed(() => {
 const eventsList = ref([])
 const isLoadingEvents = ref(true)
 const isSavingEvent = ref(false)
+const isEventEditorOpen = ref(false)
+const editingEvent = ref(null)
+const eventEditorError = ref('')
 
 const eventSwipeOffsets = ref({})
 const eventSwipeDragId = ref(null)
@@ -252,7 +279,14 @@ const EVENT_SWIPE_GESTURE_THRESHOLD = 8
 const hasOpenEventSwipe = computed(() => Object.values(eventSwipeOffsets.value).some((offset) => offset > 0))
 
 onMounted(() => {
-  console.log('SchoolItScheduleView mounted - HMR forced update')
+  initializeDashboardSession()
+    .then(() => {
+      if (!schoolSettings.value) {
+        return refreshSchoolSettings().catch(() => null)
+      }
+      return null
+    })
+    .catch(() => null)
   fetchEvents()
   document.addEventListener('pointerdown', handleDocumentPointerDown)
 })
@@ -377,32 +411,98 @@ function canManageEvent(event) {
 function openEvent(event) {
   if (!event?.id) return
   if (props.preview) {
-    router.push({ name: 'PreviewSchoolItEventDetail', params: { id: event.id } })
+    router.push({
+      name: 'PreviewSchoolItEventReports',
+      query: { eventId: String(event.id) },
+    })
   } else {
-    router.push({ name: 'SchoolItEventDetail', params: { id: event.id } })
+    router.push({
+      name: 'SchoolItEventReports',
+      query: { eventId: String(event.id) },
+    })
   }
 }
 
 function editEvent(event) {
   if (!event?.id) return
   closeAllEventSwipes()
-  window.alert(`Edit Event: ${event.name}`)
+  editingEvent.value = { ...event }
+  eventEditorError.value = ''
+  isEventEditorOpen.value = true
 }
 
 async function deleteEvent(event) {
   if (!event?.id || isSavingEvent.value) return
-  const confirmed = window.confirm(`Delete ${event.name}?`)
+  const eventName = getEventDisplayName(event)
+  const confirmed = window.confirm(`Delete ${eventName}?`)
   if (!confirmed) return
   
   isSavingEvent.value = true
   closeAllEventSwipes()
 
   try {
-    // Optimistic cache update
-    eventsList.value = eventsList.value.filter(e => e.id !== event.id)
-    // In production, we would also call await backendApi.deleteEvent(...) here
+    if (!props.preview) {
+      const token = localStorage.getItem('aura_token') || ''
+      await deleteBackendEvent(resolveApiBaseUrl(), token, event.id)
+    }
+
+    eventsList.value = eventsList.value.filter((entry) => entry.id !== event.id)
+    if (Number(editingEvent.value?.id) === Number(event.id)) {
+      closeEventEditor(true)
+    }
   } catch (error) {
-    window.alert('Failed to delete event.')
+    window.alert(error?.message || 'Failed to delete event.')
+  } finally {
+    isSavingEvent.value = false
+  }
+}
+
+function closeEventEditor(force = false) {
+  if (!force && isSavingEvent.value) return
+  isEventEditorOpen.value = false
+  editingEvent.value = null
+  eventEditorError.value = ''
+}
+
+function getEventDisplayName(event) {
+  return String(event?.name || event?.title || 'this event').trim()
+}
+
+function replaceEventInList(nextEvent) {
+  const normalizedId = Number(nextEvent?.id)
+  if (!Number.isFinite(normalizedId)) return
+  const nextEntries = eventsList.value.map((entry) =>
+    Number(entry?.id) === normalizedId ? { ...entry, ...nextEvent } : entry
+  )
+  eventsList.value = nextEntries
+}
+
+async function saveEventEdits(payload) {
+  if (!editingEvent.value?.id || isSavingEvent.value) return
+
+  isSavingEvent.value = true
+  eventEditorError.value = ''
+
+  try {
+    if (props.preview) {
+      replaceEventInList({
+        ...editingEvent.value,
+        ...payload,
+      })
+    } else {
+      const token = localStorage.getItem('aura_token') || ''
+      const updatedEvent = await updateBackendEvent(
+        resolveApiBaseUrl(),
+        token,
+        editingEvent.value.id,
+        payload
+      )
+      replaceEventInList(updatedEvent)
+    }
+
+    closeEventEditor(true)
+  } catch (error) {
+    eventEditorError.value = error?.message || 'Unable to save the event changes.'
   } finally {
     isSavingEvent.value = false
   }

@@ -10,6 +10,10 @@ import {
     resolveApiBaseUrl,
     updateUser,
 } from '@/services/backendApi.js'
+import {
+    isOpenAttendanceRecord,
+    isResolvedAttendanceRecord,
+} from '@/services/attendanceFlow.js'
 import { resolveBackendMediaUrl } from '@/services/backendMedia.js'
 import { clearStoredAuthMeta, getStoredAuthMeta, patchStoredAuthMeta } from '@/services/localAuth.js'
 
@@ -252,7 +256,10 @@ function isAdminUser(user) {
 }
 
 function applyActiveTheme() {
-    applyTheme(loadTheme(state.schoolSettings))
+    applyTheme(loadTheme(
+        state.schoolSettings
+        || buildFallbackSchoolSettings(getStoredAuthMeta())
+    ))
 }
 
 function resetDashboardState() {
@@ -501,10 +508,54 @@ export async function refreshAttendanceRecords(params = {}) {
         ...params,
     })
 
-    state.attendanceRecords = Array.isArray(records) ? records : []
+    const freshRecords = Array.isArray(records) ? records : []
+
+    if (params.event_id != null) {
+        const filteredEventId = Number(params.event_id)
+        const kept = state.attendanceRecords.filter(
+            (r) => Number(r?.event_id) !== filteredEventId
+        )
+        state.attendanceRecords = [...kept, ...freshRecords]
+    } else {
+        state.attendanceRecords = freshRecords
+    }
+
     syncUserAttendanceRecords()
     persistDashboardSnapshot()
     return state.attendanceRecords
+}
+
+export function replaceAttendanceRecordsForEvent(eventId, records = []) {
+    const normalizedEventId = Number(eventId)
+    if (!Number.isFinite(normalizedEventId)) {
+        return state.attendanceRecords
+    }
+
+    const nextRecords = Array.isArray(records)
+        ? records.filter((record) => Number(record?.event_id) === normalizedEventId)
+        : []
+
+    const keptRecords = state.attendanceRecords.filter(
+        (record) => Number(record?.event_id) !== normalizedEventId
+    )
+
+    state.attendanceRecords = [...keptRecords, ...nextRecords]
+    syncUserAttendanceRecords()
+    persistDashboardSnapshot()
+    return state.attendanceRecords
+}
+
+export function upsertAttendanceRecordSnapshot(record) {
+    if (!record || typeof record !== 'object') {
+        return state.attendanceRecords
+    }
+
+    const normalizedEventId = Number(record.event_id)
+    if (!Number.isFinite(normalizedEventId)) {
+        return state.attendanceRecords
+    }
+
+    return replaceAttendanceRecordsForEvent(normalizedEventId, [record])
 }
 
 export async function refreshSchoolSettings() {
@@ -621,13 +672,8 @@ export function hasAttendanceForEvent(eventId) {
     if (!Number.isFinite(normalizedEventId)) return false
 
     return state.attendanceRecords.some((attendance) => {
-        const status = String(attendance?.status ?? '').toLowerCase()
-        const hasTimeIn = Boolean(attendance?.time_in)
-        return Number(attendance?.event_id) === normalizedEventId && (
-            status === 'present' ||
-            status === 'late' ||
-            hasTimeIn
-        )
+        return Number(attendance?.event_id) === normalizedEventId
+            && isResolvedAttendanceRecord(attendance)
     })
 }
 
@@ -642,6 +688,16 @@ export function getLatestAttendanceForEvent(eventId) {
             const rightTime = new Date(right?.time_in || right?.created_at || 0).getTime()
             return rightTime - leftTime
         })[0] ?? null
+}
+
+export function hasOpenAttendanceForEvent(eventId) {
+    const normalizedEventId = Number(eventId)
+    if (!Number.isFinite(normalizedEventId)) return false
+
+    return state.attendanceRecords.some((attendance) => {
+        return Number(attendance?.event_id) === normalizedEventId
+            && isOpenAttendanceRecord(attendance)
+    })
 }
 
 export function sessionNeedsFaceRegistration() {
@@ -697,6 +753,8 @@ export function useDashboardSession() {
         unreadAnnouncements: computed(() => 0),
         initializeDashboardSession,
         refreshAttendanceRecords,
+        replaceAttendanceRecordsForEvent,
+        upsertAttendanceRecordSnapshot,
         refreshSchoolSettings,
         refreshFaceStatus,
         ensureDashboardEvent,
@@ -708,6 +766,7 @@ export function useDashboardSession() {
         getDashboardEventById,
         hasAttendanceForEvent,
         getLatestAttendanceForEvent,
+        hasOpenAttendanceForEvent,
         getSessionRoleNames,
         sessionHasRole,
         isPrivilegedSession,

@@ -2,16 +2,20 @@
   "id": "/",
   "name": "Aura",
   "short_name": "Aura",
-  "description": "Aura student dashboard",
-  "start_url": "/",
+  "description": "Aura - Smart attendance and student governance platform",
+  "start_url": "/?source=pwa",
   "scope": "/",
-  "display": "fullscreen",
-  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "prefer_related_applications": false,
   "background_color": "#EBEBEB",
   "theme_color": "#EBEBEB",
   "orientation": "portrait",
+  "lang": "en-US",
   "categories": ["education", "productivity", "utilities"],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "icons": [
     {
       "src": "/pwa-192.png",
@@ -30,6 +34,18 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Schedule",
+      "url": "/dashboard/schedule",
+      "icons": [{"src": "/pwa-192.png", "sizes": "192x192"}]
+    },
+    {
+      "name": "My Profile",
+      "url": "/dashboard/profile",
+      "icons": [{"src": "/pwa-192.png", "sizes": "192x192"}]
     }
   ]
 }

@@ -85,6 +85,7 @@ export function normalizeImportPreviewSummary(payload = {}) {
 
   return {
     filename: toOptionalString(payload?.filename, ''),
+    preview_token: toOptionalString(payload?.preview_token, ''),
     total_rows: toOptionalNumber(payload?.total_rows, rows.length),
     valid_rows: toOptionalNumber(payload?.valid_rows, rows.filter((row) => row.status === 'valid').length),
     invalid_rows: toOptionalNumber(payload?.invalid_rows, rows.filter((row) => row.status !== 'valid').length),
@@ -97,6 +98,7 @@ export function normalizeImportJobCreateResponse(payload = {}) {
   return {
     job_id: toOptionalString(payload?.job_id, ''),
     status: toOptionalString(payload?.status, 'queued'),
+    retried_from_job_id: toOptionalString(payload?.retried_from_job_id, ''),
   }
 }
 

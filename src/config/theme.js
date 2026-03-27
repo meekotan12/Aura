@@ -25,7 +25,7 @@ function updateDocumentThemeColor(color) {
  */
 export const defaultTheme = {
     // Customizable by School IT
-    primaryColor: '#AAFF00',       // Lime green - the accent/brand color
+    primaryColor: '#ffffffff',       // Lime green - the accent/brand color
     primaryDark: '#88CC00',        // Slightly darker for hover states
     primaryText: '#0A0A0A',        // Text on primary colored backgrounds
     secondaryColor: '#AAFF00',

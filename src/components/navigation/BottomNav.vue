@@ -44,7 +44,7 @@
       class="bottom-nav__council-btn"
       :class="isCouncilActive ? 'bottom-nav__council-btn--active' : 'bottom-nav__council-btn--idle'"
       aria-label="Student Council Workspace"
-      @click="navigate('/sg')"
+      @click="navigate(resolveCouncilWorkspaceLocation(route))"
     >
       <span
         v-if="isCouncilActive"
@@ -72,19 +72,20 @@
 <script setup>
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { getNavigationItemsForPath } from '@/components/navigation/navigationItems.js'
+import { getNavigationItemsForRoute } from '@/components/navigation/navigationItems.js'
 import { useStudentCouncilAccess } from '@/composables/useStudentCouncilAccess.js'
+import { isCouncilWorkspaceContext, resolveCouncilWorkspaceLocation } from '@/services/routeWorkspace.js'
 
 const router = useRouter()
 const route = useRoute()
 const { isCouncilMember, acronym: councilAcronym } = useStudentCouncilAccess()
-const navItems = computed(() => getNavigationItemsForPath(route.path))
+const navItems = computed(() => getNavigationItemsForRoute(route))
 const bottomNavStyle = computed(() => ({
   '--nav-count': String(navItems.value.length),
 }))
 
 const isCouncilActive = computed(() => {
-  return route.path.startsWith('/sg');
+  return isCouncilWorkspaceContext(route)
 })
 
 function isActive(item) {
@@ -96,7 +97,9 @@ function isActive(item) {
     path === '/workspace' ||
     path === '/exposed/workspace' ||
     path === '/admin' ||
-    path === '/exposed/admin'
+    path === '/exposed/admin' ||
+    path === '/sg' ||
+    path === '/exposed/sg'
   ) {
     return route.path === path || route.path === `${path}/`
   }
@@ -106,7 +109,8 @@ function isActive(item) {
 }
 
 function navigate(path) {
-  if (route.path === path) return
+  const target = typeof path === 'string' ? path : router.resolve(path).path
+  if (target && route.path === target) return
   router.push(path)
 }
 </script>

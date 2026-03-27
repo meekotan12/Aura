@@ -38,6 +38,7 @@
           :event="event"
           :is-attended="isEventAttended(event)"
           :attendance-record="getAttendanceRecord(event)"
+          :event-time-status="getEventTimeStatusFor(event)"
           @click="handleEventClick"
           @open-detail="handleOpenDetail"
         />
@@ -52,14 +53,18 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import EventCard from '@/components/dashboard/EventCard.vue'
 import TopBar from '@/components/dashboard/TopBar.vue'
 
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import { usePreviewTheme } from '@/composables/usePreviewTheme.js'
 import { studentDashboardPreviewData } from '@/data/studentDashboardPreview.js'
+import { getEventTimeStatus, resolveApiBaseUrl } from '@/services/backendApi.js'
+import { resolveAttendanceActionState, resolveEventLifecycleStatus } from '@/services/attendanceFlow.js'
+import { primeLocationAccess } from '@/services/devicePermissions.js'
+import { resolveAttendanceLocation, resolveEventDetailLocation } from '@/services/routeWorkspace.js'
 
 const props = defineProps({
   preview: {
@@ -71,18 +76,26 @@ const props = defineProps({
 const {
   currentUser,
   events,
+  attendanceRecords,
   getLatestAttendanceForEvent,
   hasAttendanceForEvent,
+  hasOpenAttendanceForEvent,
+  refreshAttendanceRecords,
   unreadAnnouncements,
 } = useDashboardSession()
 const showNotifications = ref(false)
 
 const router = useRouter()
+const route = useRoute()
 const activeUser = computed(() => props.preview ? studentDashboardPreviewData.user : currentUser.value)
 const activeEvents = computed(() => props.preview ? studentDashboardPreviewData.events : events.value)
-const activeAttendanceRecords = computed(() => props.preview ? studentDashboardPreviewData.attendanceRecords : [])
+const activeAttendanceRecords = computed(() => props.preview ? studentDashboardPreviewData.attendanceRecords : attendanceRecords.value)
 const activeUnreadAnnouncements = computed(() => props.preview ? 0 : unreadAnnouncements.value)
 const activeSchoolSettings = computed(() => props.preview ? studentDashboardPreviewData.schoolSettings : null)
+const apiBaseUrl = resolveApiBaseUrl()
+const eventTimeStatuses = ref({})
+let eventTimeStatusRequestId = 0
+let eventTimeStatusIntervalId = null
 
 usePreviewTheme(() => props.preview, activeSchoolSettings)
 
@@ -115,29 +128,153 @@ function normalizeStatus(status) {
 const filteredEvents = computed(() => {
   let items = schoolEvents.value
   if (activeFilter.value !== 'all' && activeFilter.value !== 'maps') {
-    items = items.filter(e => normalizeStatus(e.status) === activeFilter.value)
+    items = items.filter((currentEvent) => {
+      return resolveEventLifecycleStatus(currentEvent, getEventTimeStatusFor(currentEvent)) === activeFilter.value
+    })
   }
   if (activeFilter.value === 'maps') return []
   return [...items].sort((a, b) => {
-    const aRank = statusRank[normalizeStatus(a.status)] ?? 99
-    const bRank = statusRank[normalizeStatus(b.status)] ?? 99
+    const aRank = statusRank[resolveEventLifecycleStatus(a, getEventTimeStatusFor(a))] ?? 99
+    const bRank = statusRank[resolveEventLifecycleStatus(b, getEventTimeStatusFor(b))] ?? 99
     if (aRank !== bRank) return aRank - bRank
     return new Date(a.start_datetime) - new Date(b.start_datetime)
   })
 })
 
-function handleEventClick(event) {
-  if (!event?.id) return
-  if (!props.preview && event.status === 'ongoing' && !isEventAttended(event)) {
-    router.push(`/dashboard/schedule/${event.id}/attendance`)
+const timeStatusCandidateIds = computed(() => {
+  if (props.preview) return []
+
+  const ids = new Set()
+  for (const currentEvent of schoolEvents.value) {
+    const normalizedEventId = Number(currentEvent?.id)
+    if (!Number.isFinite(normalizedEventId)) continue
+
+    if (
+      ['upcoming', 'ongoing'].includes(normalizeStatus(currentEvent?.status))
+      || hasOpenAttendanceForEvent(normalizedEventId)
+    ) {
+      ids.add(normalizedEventId)
+    }
+  }
+
+  return [...ids].sort((left, right) => left - right)
+})
+
+watch(
+  timeStatusCandidateIds,
+  (eventIds) => {
+    void syncEventTimeStatuses(eventIds)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.preview,
+  (isPreview) => {
+    if (isPreview) {
+      stopEventTimeStatusPolling()
+      return
+    }
+    startEventTimeStatusPolling()
+  },
+  { immediate: true }
+)
+
+async function syncEventTimeStatuses(eventIds) {
+  const requestId = ++eventTimeStatusRequestId
+
+  if (props.preview || !eventIds.length) {
+    eventTimeStatuses.value = {}
     return
   }
-  router.push(props.preview ? `/exposed/dashboard/schedule/${event.id}` : `/dashboard/schedule/${event.id}`)
+
+  const token = localStorage.getItem('aura_token')
+  if (!token) {
+    eventTimeStatuses.value = {}
+    return
+  }
+
+  const previousStatuses = eventTimeStatuses.value
+  const nextStatuses = {}
+
+  await Promise.all(eventIds.map(async (currentEventId) => {
+    try {
+      nextStatuses[currentEventId] = await getEventTimeStatus(apiBaseUrl, token, currentEventId)
+    } catch {
+      nextStatuses[currentEventId] = null
+    }
+  }))
+
+  if (requestId !== eventTimeStatusRequestId) {
+    return
+  }
+
+  eventTimeStatuses.value = nextStatuses
+
+  const closedTransitionIds = eventIds.filter((currentEventId) => {
+    const previousStatus = previousStatuses?.[currentEventId]?.event_status
+    const nextStatus = nextStatuses?.[currentEventId]?.event_status
+    return nextStatus === 'closed' && previousStatus !== 'closed'
+  })
+
+  if (closedTransitionIds.length) {
+    await Promise.allSettled(
+      closedTransitionIds.map((currentEventId) => refreshAttendanceRecords({ event_id: currentEventId }))
+    )
+  }
+}
+
+function getEventTimeStatusFor(event) {
+  const normalizedEventId = Number(event?.id)
+  if (!Number.isFinite(normalizedEventId)) return null
+  return eventTimeStatuses.value[normalizedEventId] ?? null
+}
+
+function stopEventTimeStatusPolling() {
+  if (eventTimeStatusIntervalId != null) {
+    clearInterval(eventTimeStatusIntervalId)
+    eventTimeStatusIntervalId = null
+  }
+}
+
+function startEventTimeStatusPolling() {
+  stopEventTimeStatusPolling()
+  if (props.preview) return
+
+  eventTimeStatusIntervalId = window.setInterval(() => {
+    void syncEventTimeStatuses(timeStatusCandidateIds.value)
+  }, 15000)
+}
+
+function shouldRouteToAttendance(event) {
+  if (props.preview || !event?.id) return false
+
+  const normalizedEventId = Number(event.id)
+  if (!Number.isFinite(normalizedEventId)) return false
+
+  const actionState = resolveAttendanceActionState({
+    event,
+    eventStatus: resolveEventLifecycleStatus(event, getEventTimeStatusFor(event)),
+    attendanceRecord: getAttendanceRecord(event),
+    timeStatus: getEventTimeStatusFor(event),
+  })
+
+  return actionState === 'sign-in' || actionState === 'sign-out'
+}
+
+function handleEventClick(event) {
+  if (!event?.id) return
+  if (shouldRouteToAttendance(event)) {
+    void primeLocationAccess()
+    router.push(resolveAttendanceLocation(route, event.id))
+    return
+  }
+  router.push(resolveEventDetailLocation(route, event.id))
 }
 
 function handleOpenDetail(event) {
   if (!event?.id) return
-  router.push(props.preview ? `/exposed/dashboard/schedule/${event.id}` : `/dashboard/schedule/${event.id}`)
+  router.push(resolveEventDetailLocation(route, event.id))
 }
 
 function isEventAttended(event) {
@@ -167,6 +304,15 @@ function getAttendanceRecord(event) {
   }
   return getLatestAttendanceForEvent(event?.id)
 }
+
+onBeforeUnmount(() => {
+  stopEventTimeStatusPolling()
+})
+
+onMounted(() => {
+  if (props.preview) return
+  refreshAttendanceRecords({ limit: 200 }).catch(() => null)
+})
 </script>
 
 <style scoped>

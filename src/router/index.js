@@ -10,6 +10,8 @@ import {
     sessionNeedsFaceRegistration,
 } from '@/composables/useDashboardSession.js'
 import { hasPrivilegedPendingFace, needsStoredPasswordChange } from '@/services/localAuth.js'
+import { setNavigationPending } from '@/services/navigationState.js'
+import SchoolItProgramStudentsView from '@/views/dashboard/SchoolItProgramStudentsView.vue'
 
 const AppLayout = () => import('@/layouts/AppLayout.vue')
 const HomeView = () => import('@/views/dashboard/HomeView.vue')
@@ -26,6 +28,11 @@ const routes = [
         name: 'Login',
         component: () => import('@/views/auth/LoginView.vue'),
         meta: { requiresGuest: true },
+    },
+    {
+        path: '/quick-attendance',
+        name: 'QuickAttendance',
+        component: () => import('@/views/auth/QuickAttendanceView.vue'),
     },
     {
         path: '/api-lab',
@@ -104,6 +111,8 @@ const routes = [
         meta: {
             requiresAuth: true,
             allowWithoutFaceEnrollment: true,
+            primaryNavContext: 'admin',
+            workspaceContext: 'admin',
         },
         children: [
             {
@@ -141,6 +150,10 @@ const routes = [
     {
         path: '/exposed/admin',
         component: AppLayout,
+        meta: {
+            primaryNavContext: 'admin_preview',
+            workspaceContext: 'admin_preview',
+        },
         children: [
             {
                 path: '',
@@ -180,6 +193,8 @@ const routes = [
         meta: {
             requiresAuth: true,
             allowWithoutFaceEnrollment: true,
+            primaryNavContext: 'workspace',
+            workspaceContext: 'workspace',
         },
         children: [
             {
@@ -205,7 +220,7 @@ const routes = [
             {
                 path: 'users/department/:departmentId/program/:programId',
                 name: 'SchoolItProgramStudents',
-                component: () => import('@/views/dashboard/SchoolItProgramStudentsView.vue'),
+                component: SchoolItProgramStudentsView,
             },
             {
                 path: 'users/unassigned',
@@ -256,6 +271,10 @@ const routes = [
     {
         path: '/exposed/workspace',
         component: AppLayout,
+        meta: {
+            primaryNavContext: 'workspace_preview',
+            workspaceContext: 'workspace_preview',
+        },
         children: [
             {
                 path: '',
@@ -284,7 +303,7 @@ const routes = [
             {
                 path: 'users/department/:departmentId/program/:programId',
                 name: 'PreviewSchoolItProgramStudents',
-                component: () => import('@/views/dashboard/SchoolItProgramStudentsView.vue'),
+                component: SchoolItProgramStudentsView,
                 props: { preview: true },
             },
             {
@@ -343,6 +362,10 @@ const routes = [
     {
         path: '/exposed/dashboard',
         component: AppLayout,
+        meta: {
+            primaryNavContext: 'dashboard_preview',
+            workspaceContext: 'dashboard_preview',
+        },
         children: [
             {
                 path: '',
@@ -383,6 +406,8 @@ const routes = [
         meta: {
             requiresAuth: true,
             allowWithoutFaceEnrollment: true,
+            primaryNavContext: 'dashboard',
+            workspaceContext: 'sg',
         },
         children: [
             {
@@ -416,6 +441,11 @@ const routes = [
                 component: () => import('@/views/dashboard/SgEventsView.vue'),
             },
             {
+                path: 'events/:id',
+                name: 'SgEventDetail',
+                component: EventDetailView,
+            },
+            {
                 path: 'attendance',
                 name: 'SgAttendance',
                 component: () => import('@/views/dashboard/SgAttendanceView.vue'),
@@ -425,6 +455,10 @@ const routes = [
     {
         path: '/exposed/sg',
         component: AppLayout,
+        meta: {
+            primaryNavContext: 'dashboard_preview',
+            workspaceContext: 'sg_preview',
+        },
         children: [
             {
                 path: '',
@@ -438,7 +472,11 @@ const routes = [
     {
         path: '/dashboard',
         component: AppLayout,
-        meta: { requiresAuth: true },
+        meta: {
+            requiresAuth: true,
+            primaryNavContext: 'dashboard',
+            workspaceContext: 'dashboard',
+        },
         children: [
             {
                 path: '',
@@ -484,6 +522,7 @@ const router = createRouter({
 
 // Navigation guard
 router.beforeEach(async (to) => {
+    setNavigationPending(true)
     const isAuthenticated = hasSessionToken()
     const mustChangePassword = needsStoredPasswordChange()
     const privilegedPendingFace = hasPrivilegedPendingFace()
@@ -601,6 +640,14 @@ router.beforeEach(async (to) => {
     }
 
     return true
+})
+
+router.afterEach(() => {
+    setNavigationPending(false)
+})
+
+router.onError(() => {
+    setNavigationPending(false)
 })
 
 export default router

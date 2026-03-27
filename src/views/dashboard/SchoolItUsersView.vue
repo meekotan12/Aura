@@ -81,7 +81,7 @@
               id="school-it-users-college-panel"
               class="school-it-users__college-panel"
               role="region"
-              aria-label="Add college"
+              :aria-label="collegePanelAriaLabel"
             >
               <div class="school-it-users__college-panel-inner">
                 <div class="school-it-users__college-shell">
@@ -89,7 +89,7 @@
                     <button
                       class="school-it-users__college-close"
                       type="button"
-                      aria-label="Close add college"
+                      aria-label="Close college panel"
                       @click="closeAddCollegePanel"
                     >
                       <X :size="18" :stroke-width="2.4" />
@@ -325,6 +325,7 @@ const collegeDraftName = ref('')
 const collegePanelMessage = ref('')
 const collegePanelError = ref(false)
 const isSavingCollege = ref(false)
+const collegePanelMode = ref('create')
 const editingDepartmentId = ref(null)
 const previewDepartmentOverrides = ref([])
 const departmentSwipeOffsets = ref({})
@@ -480,15 +481,17 @@ const departmentEmptyMessage = computed(() => {
 })
 
 const searchActive = computed(() => searchQuery.value.trim().length > 0)
-const isEditingCollege = computed(() => Number.isFinite(Number(editingDepartmentId.value)))
+const resolvedEditingDepartmentId = computed(() => normalizeWorkspaceEntityId(editingDepartmentId.value))
+const isEditingCollege = computed(() => collegePanelMode.value === 'edit' && resolvedEditingDepartmentId.value != null)
+const collegePanelAriaLabel = computed(() => isEditingCollege.value ? 'Edit college' : 'Add college')
 const collegePanelTitle = computed(() => isEditingCollege.value ? 'Edit College' : 'Add College')
-const collegeSubmitLabel = computed(() => isEditingCollege.value ? 'Save' : 'Enter')
+const collegeSubmitLabel = computed(() => isEditingCollege.value ? 'Save' : 'Add')
 const collegeSubmitDisabled = computed(() => {
   const normalizedName = collegeDraftName.value.trim()
-  return isSavingCollege.value || normalizedName.length < 2
+  return isSavingCollege.value || normalizedName.length < 2 || normalizedName.length > 100
 })
 const departmentNameLookup = computed(() => new Map(
-  activeDepartments.value
+  filteredDepartments.value
     .map((department) => [String(department?.name || '').trim().toLowerCase(), Number(department?.id)])
     .filter(([name]) => Boolean(name))
 ))
@@ -559,6 +562,11 @@ function buildInitials(value) {
   return String(value || '').slice(0, 2).toUpperCase()
 }
 
+function normalizeWorkspaceEntityId(value) {
+  const normalizedValue = Number(value)
+  return Number.isInteger(normalizedValue) && normalizedValue > 0 ? normalizedValue : null
+}
+
 function isStudentUser(user) {
   const roles = Array.isArray(user?.roles)
     ? user.roles.map((role) => String(role?.role?.name || role?.name || '').toLowerCase())
@@ -596,16 +604,20 @@ function handleOverviewAction(card) {
 
 function openAddCollegePanel() {
   closeAllDepartmentSwipes()
+  collegePanelMode.value = 'create'
   editingDepartmentId.value = null
+  collegeDraftName.value = ''
   collegePanelMessage.value = ''
   collegePanelError.value = false
   isAddCollegeOpen.value = true
 }
 
 function openEditCollegePanel(department) {
-  if (!department?.id) return
+  const normalizedDepartmentId = normalizeWorkspaceEntityId(department?.id)
+  if (normalizedDepartmentId == null) return
   closeAllDepartmentSwipes()
-  editingDepartmentId.value = Number(department.id)
+  collegePanelMode.value = 'edit'
+  editingDepartmentId.value = normalizedDepartmentId
   collegeDraftName.value = String(department.name || '')
   collegePanelMessage.value = ''
   collegePanelError.value = false
@@ -614,6 +626,7 @@ function openEditCollegePanel(department) {
 
 function closeAddCollegePanel() {
   isAddCollegeOpen.value = false
+  collegePanelMode.value = 'create'
   collegePanelMessage.value = ''
   collegePanelError.value = false
   collegeDraftName.value = ''
@@ -624,8 +637,10 @@ async function submitCollege() {
   if (collegeSubmitDisabled.value) return
 
   const normalizedName = collegeDraftName.value.trim()
+  const resolvedDepartmentId = resolvedEditingDepartmentId.value
+  const mutationMode = isEditingCollege.value ? 'update' : 'create'
   const existingDepartmentId = departmentNameLookup.value.get(normalizedName.toLowerCase())
-  if (existingDepartmentId && Number(existingDepartmentId) !== Number(editingDepartmentId.value)) {
+  if (existingDepartmentId != null && existingDepartmentId !== resolvedDepartmentId) {
     collegePanelError.value = true
     collegePanelMessage.value = `${normalizedName} already exists.`
     return
@@ -637,16 +652,16 @@ async function submitCollege() {
 
   try {
     const authToken = localStorage.getItem('aura_token') || ''
-    const createdDepartment = isEditingCollege.value
+    const createdDepartment = mutationMode === 'update'
       ? (
         props.preview
           ? {
-            ...(activeDepartments.value.find((department) => Number(department.id) === Number(editingDepartmentId.value)) || {}),
-            id: Number(editingDepartmentId.value),
+            ...(activeDepartments.value.find((department) => Number(department.id) === resolvedDepartmentId) || {}),
+            id: resolvedDepartmentId,
             school_id: schoolId.value,
             name: normalizedName,
           }
-          : await updateDepartment(apiBaseUrl.value, authToken, editingDepartmentId.value, {
+          : await updateDepartment(apiBaseUrl.value, authToken, resolvedDepartmentId, {
             name: normalizedName,
           })
       )
@@ -671,7 +686,7 @@ async function submitCollege() {
       refreshSchoolItWorkspaceData().catch(() => {})
     }
 
-    collegePanelMessage.value = isEditingCollege.value
+    collegePanelMessage.value = mutationMode === 'update'
       ? `${createdDepartment.name} updated successfully.`
       : `${createdDepartment.name} added successfully.`
     collegeDraftName.value = ''
@@ -680,7 +695,7 @@ async function submitCollege() {
     }, 420)
   } catch (error) {
     collegePanelError.value = true
-    collegePanelMessage.value = resolveDepartmentMutationErrorMessage(error, isEditingCollege.value ? 'update' : 'create')
+    collegePanelMessage.value = resolveDepartmentMutationErrorMessage(error, mutationMode)
   } finally {
     isSavingCollege.value = false
   }
@@ -707,7 +722,7 @@ async function deleteCollege(department) {
       refreshSchoolItWorkspaceData().catch(() => {})
     }
 
-    if (Number(editingDepartmentId.value) === Number(department.id)) {
+    if (resolvedEditingDepartmentId.value === Number(department.id)) {
       closeAddCollegePanel()
     }
   } catch (error) {
@@ -802,8 +817,44 @@ function resolveDepartmentMutationErrorMessage(error, mode = 'create') {
     return `Unable to ${verb} this college right now.`
   }
 
+  const validationDetail = Array.isArray(error?.details?.detail)
+    ? error.details.detail.find((item) => item && typeof item === 'object')
+    : null
+  const validationMessage = typeof validationDetail?.msg === 'string'
+    ? validationDetail.msg
+    : null
+  const validationPath = Array.isArray(validationDetail?.loc)
+    ? validationDetail.loc.map((segment) => String(segment).toLowerCase())
+    : []
+
   if (error.status === 422) {
-    return 'College name must be between 2 and 100 characters.'
+    if (validationPath.includes('name')) {
+      return 'College name must be between 2 and 100 characters.'
+    }
+    if (validationPath.includes('department_id')) {
+      return 'The selected college could not be resolved. Please reopen the panel and try again.'
+    }
+    if (validationMessage) {
+      return validationMessage
+    }
+    if (typeof error?.details?.detail === 'string') {
+      return error.details.detail
+    }
+    if (typeof error?.details?.message === 'string') {
+      return error.details.message
+    }
+    if (error.message && error.message !== '[object Object]') {
+      return error.message
+    }
+    return 'Invalid college details provided.'
+  }
+
+  if (error.status === 400 && /already exists/i.test(String(error.message || ''))) {
+    return 'A college with this name already exists.'
+  }
+
+  if (error.status === 400 && mode === 'delete' && /cannot delete department|referenced by programs/i.test(String(error.message || ''))) {
+    return 'This college is still linked to programs and cannot be deleted yet.'
   }
 
   if (error.status === 403) {

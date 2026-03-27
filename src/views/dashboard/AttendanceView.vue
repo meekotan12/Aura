@@ -39,7 +39,7 @@
         />
 
         <section v-else-if="flowStep === 'location'" class="step-section step-section--location dashboard-enter dashboard-enter--2">
-          <p class="step-caption">Locating you for the event...</p>
+          <p class="step-caption">{{ locationMessage }}</p>
 
           <div class="location-map">
             <iframe
@@ -84,7 +84,13 @@
             </div>
           </div>
 
-          <p v-if="showLocationError" class="location-hint">{{ locationErrorText }}</p>
+          <p
+            v-if="showLocationError || locationDetailText"
+            class="location-hint"
+            :class="{ 'location-hint--ok': !showLocationError && Boolean(locationDetailText) }"
+          >
+            {{ showLocationError ? locationErrorText : locationDetailText }}
+          </p>
 
           <div v-if="showLocationError" class="location-error-block">
             <button class="location-retry-btn" type="button" @click="retryLocationCheck">
@@ -105,6 +111,7 @@
 
         <section v-else class="step-section step-section--success dashboard-enter dashboard-enter--3">
           <p class="success-caption">{{ successMessage }}</p>
+          <p v-if="successDetailMessage" class="success-detail">{{ successDetailMessage }}</p>
           <button class="success-btn" type="button" @click="goBack">
             <span class="success-btn-icon">
               <ArrowRight :size="16" />
@@ -143,11 +150,23 @@ import FaceScanPanel from '@/components/attendance/FaceScanPanel.vue'
 import { initFaceScanDetector, resetFaceScanDetector } from '@/composables/useFaceScanDetector.js'
 import { useDashboardSession } from '@/composables/useDashboardSession.js'
 import {
+  buildAttendanceLocationErrorMessage,
+  formatCompactDuration,
+  getMillisecondsUntilSignOutOpen,
+  hasSignedInAttendance,
+  hasSignedOutAttendance,
+  isOpenAttendanceRecord,
+  resolveAttendanceCompletionState,
+  resolveAttendanceActionState,
+} from '@/services/attendanceFlow.js'
+import { getCurrentPositionWithinAccuracyOrThrow } from '@/services/devicePermissions.js'
+import {
+  getEventTimeStatus,
   recordFaceScanAttendance as postFaceScanAttendance,
-  recordFaceScanTimeout as postFaceScanTimeout,
   resolveApiBaseUrl,
   verifyEventLocation,
 } from '@/services/backendApi.js'
+import { hasNavigableHistory, resolveBackFallbackLocation } from '@/services/routeWorkspace.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -155,23 +174,29 @@ const {
   currentUser,
   ensureDashboardEvent,
   getDashboardEventById,
-  hasAttendanceForEvent,
+  getLatestAttendanceForEvent,
   refreshAttendanceRecords,
+  upsertAttendanceRecordSnapshot,
 } = useDashboardSession()
 
 const eventId = computed(() => Number(route.params.id))
 const event = computed(() => getDashboardEventById(eventId.value))
+const latestAttendanceRecord = computed(() => getLatestAttendanceForEvent(eventId.value))
 
 const flowStep = ref('face')
 const isRunning = ref(false)
 const userCoords = ref(null)
+const locationCheck = ref(null)
 const successReason = ref('recorded')
+const eventTimeStatus = ref(null)
+const locationMessage = ref('Checking event location...')
 const stepTrackEl = ref(null)
 const stepNodeEls = ref([null, null, null])
 const trackWidthPx = ref(0)
 const trackCenters = ref({ left: 0, middle: 0, right: 0 })
 const locationStatus = ref('idle')
 const locationError = ref('')
+const recordingFailed = ref(false)
 const videoEl = ref(null)
 const capturedFaceDataUrl = ref('')
 const mediaStream = ref(null)
@@ -197,8 +222,6 @@ const faceScanVideoReadyTimeoutMs = Number(
   import.meta.env.VITE_FACE_SCAN_VIDEO_READY_TIMEOUT_MS ?? faceScanTimeoutMs
 )
 const faceScanGateEnabled = import.meta.env.VITE_FACE_SCAN_GATE !== 'false'
-const allowUnsupportedFallback = import.meta.env.VITE_FACE_SCAN_ALLOW_UNSUPPORTED === 'true'
-const allowDeniedFallback = import.meta.env.VITE_FACE_SCAN_ALLOW_DENIED === 'true'
 const faceDetectorWasmBaseUrl =
   import.meta.env.VITE_FACE_DETECTOR_WASM_URL ||
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
@@ -257,8 +280,24 @@ const showFaceError = computed(() =>
   flowStep.value === 'face' && faceScanError.value
 )
 const showLocationError = computed(() =>
-  flowStep.value === 'location' && locationStatus.value === 'error'
+  flowStep.value === 'location' && (locationStatus.value === 'error' || recordingFailed.value)
 )
+const locationDetailText = computed(() => {
+  if (showLocationError.value) return ''
+
+  const distance = Number(locationCheck.value?.distance_m)
+  const radius = Number(locationCheck.value?.radius_m)
+  if (locationCheck.value?.ok && Number.isFinite(distance) && Number.isFinite(radius)) {
+    return `Location confirmed at ${distance.toFixed(1)}m from the event marker. Allowed radius: ${radius.toFixed(0)}m.`
+  }
+
+  const accuracy = Number(userCoords.value?.accuracy)
+  if (Number.isFinite(accuracy) && accuracy > 0) {
+    return `GPS accuracy ${Math.round(accuracy)}m.`
+  }
+
+  return ''
+})
 const setVideoEl = (el) => {
   videoEl.value = el
 }
@@ -324,35 +363,307 @@ const mapDestination = computed(() => {
 })
 
 const apiBaseUrl = resolveApiBaseUrl()
-const successMessage = computed(() =>
-  successReason.value === 'existing'
-    ? 'Attendance already recorded.'
-    : 'Attendance recorded successfully.'
-)
+const successMessage = computed(() => {
+  if (successReason.value === 'existing') {
+    return 'Attendance already recorded.'
+  }
+  if (successReason.value === 'not-open') {
+    return 'Check-in has not opened yet for this event.'
+  }
+  if (successReason.value === 'closed') {
+    return isOpenAttendanceRecord(latestAttendanceRecord.value)
+      ? 'The sign-out window is already closed for this event.'
+      : 'Attendance is already closed for this event.'
+  }
+  if (successReason.value === 'missed-check-in') {
+    return 'Check-in is already closed. Only students with an active attendance can sign out now.'
+  }
+  if (successReason.value === 'waiting-sign-out') {
+    return 'Your sign-in is saved. Waiting for the backend sign-out window.'
+  }
+  if (successReason.value === 'signed-in') {
+    return 'Face verified and sign-in saved. Waiting for sign out.'
+  }
+  if (successReason.value === 'signed-out') {
+    return 'Attendance completed successfully.'
+  }
+  return 'Attendance recorded successfully.'
+})
+const signOutWaitCountdown = computed(() => {
+  if (!['waiting-sign-out', 'signed-in'].includes(successReason.value)) {
+    return ''
+  }
+
+  const diffMs = getMillisecondsUntilSignOutOpen({
+    event: event.value,
+    timeStatus: eventTimeStatus.value,
+  })
+
+  if (!Number.isFinite(diffMs) || diffMs == null) {
+    return ''
+  }
+
+  return diffMs <= 0 ? 'less than 1 min' : formatCompactDuration(diffMs)
+})
+const successDetailMessage = computed(() => {
+  const details = []
+  const distance = Number(locationCheck.value?.distance_m)
+
+  if (locationCheck.value?.ok && Number.isFinite(distance)) {
+    details.push(`Location confirmed at ${distance.toFixed(1)}m from the event marker.`)
+  }
+  else {
+    const accuracy = Number(userCoords.value?.accuracy)
+    if (Number.isFinite(accuracy) && accuracy > 0) {
+      details.push(`GPS accuracy ${Math.round(accuracy)}m.`)
+    }
+  }
+
+  if (signOutWaitCountdown.value) {
+    details.push(`Sign-out opens in ${signOutWaitCountdown.value}.`)
+  }
+
+  return details.join(' ')
+})
+
+function normalizeFaceScanAction(action) {
+  return String(action ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function isFaceScanSignOutAction(action) {
+  return ['sign_out', 'signed_out', 'check_out', 'checkout', 'time_out', 'out'].includes(action)
+}
+
+function isFaceScanSignInAction(action) {
+  return ['sign_in', 'signed_in', 'check_in', 'checkin', 'time_in', 'in'].includes(action)
+}
+
+async function loadEventTimeStatus() {
+  const normalizedEventId = eventId.value
+  if (!Number.isFinite(normalizedEventId)) {
+    eventTimeStatus.value = null
+    return null
+  }
+
+  const token = localStorage.getItem('aura_token')
+  if (!token) {
+    eventTimeStatus.value = null
+    return null
+  }
+
+  try {
+    eventTimeStatus.value = await getEventTimeStatus(apiBaseUrl, token, normalizedEventId)
+  } catch {
+    eventTimeStatus.value = null
+  }
+
+  return eventTimeStatus.value
+}
+
+async function refreshAttendanceContext() {
+  const normalizedEventId = eventId.value
+  if (!Number.isFinite(normalizedEventId)) {
+    return {
+      attendanceRecord: latestAttendanceRecord.value,
+      timeStatus: eventTimeStatus.value,
+    }
+  }
+
+  await Promise.allSettled([
+    refreshAttendanceRecords({ event_id: normalizedEventId }),
+    loadEventTimeStatus(),
+  ])
+
+  return {
+    attendanceRecord: getLatestAttendanceForEvent(normalizedEventId),
+    timeStatus: eventTimeStatus.value,
+  }
+}
+
+function clearLocationVerificationState() {
+  locationCheck.value = null
+}
+
+function setLocationVerificationResult(detail = null) {
+  locationCheck.value = detail && typeof detail === 'object'
+    ? { ...detail }
+    : null
+
+  const distance = Number(locationCheck.value?.distance_m)
+  if (locationCheck.value?.ok && Number.isFinite(distance)) {
+    locationMessage.value = `Location confirmed. You are ${distance.toFixed(1)}m from the event marker.`
+    return
+  }
+
+  if (locationCheck.value?.ok) {
+    locationMessage.value = 'Location verified.'
+  }
+}
+
+function resolveSuccessReasonFromScanResult(
+  result,
+  attendanceRecord = latestAttendanceRecord.value,
+  timeStatus = eventTimeStatus.value
+) {
+  const action = normalizeFaceScanAction(result?.action)
+
+  if (result?.time_out || hasSignedOutAttendance(attendanceRecord) || isFaceScanSignOutAction(action)) {
+    return 'signed-out'
+  }
+
+  const nextActionState = resolveAttendanceActionState({
+    event: event.value,
+    eventStatus: event.value?.status,
+    attendanceRecord,
+    timeStatus,
+  })
+
+  if (nextActionState === 'waiting-sign-out') {
+    return 'waiting-sign-out'
+  }
+
+  if (nextActionState === 'done' && hasSignedOutAttendance(attendanceRecord)) {
+    return 'signed-out'
+  }
+
+  if (result?.time_in || hasSignedInAttendance(attendanceRecord) || isFaceScanSignInAction(action)) {
+    return 'signed-in'
+  }
+
+  return 'recorded'
+}
+
+function buildOptimisticAttendanceRecord(result, existingAttendanceRecord = latestAttendanceRecord.value) {
+  const normalizedEventId = Number(eventId.value)
+  if (!Number.isFinite(normalizedEventId)) {
+    return null
+  }
+
+  const attendanceId = Number(result?.attendance_id)
+  const action = normalizeFaceScanAction(result?.action)
+  const timeIn = result?.time_in ?? existingAttendanceRecord?.time_in ?? null
+  const timeOut = result?.time_out ?? existingAttendanceRecord?.time_out ?? null
+  const checkInStatus =
+    result?.geo?.attendance_decision?.attendance_status
+    ?? existingAttendanceRecord?.check_in_status
+    ?? existingAttendanceRecord?.status
+    ?? null
+  const hasCompletedAttendance = Boolean(timeOut) || isFaceScanSignOutAction(action)
+  const finalizedStatus =
+    existingAttendanceRecord?.check_in_status
+    ?? checkInStatus
+    ?? existingAttendanceRecord?.status
+    ?? 'present'
+  const isValidCompletedAttendance = hasCompletedAttendance
+    ? ['present', 'late'].includes(String(finalizedStatus || '').trim().toLowerCase())
+    : false
+
+  if (!Number.isFinite(attendanceId) && !timeIn && !timeOut) {
+    return null
+  }
+
+  return {
+    ...(existingAttendanceRecord || {}),
+    id: Number.isFinite(attendanceId) ? attendanceId : Number(existingAttendanceRecord?.id ?? 0),
+    event_id: normalizedEventId,
+    student_id:
+      existingAttendanceRecord?.student_id
+      ?? currentUser.value?.student_profile?.id
+      ?? currentUser.value?.student_profile?.student_id
+      ?? currentUser.value?.id
+      ?? null,
+    method: existingAttendanceRecord?.method || 'face_scan',
+    status: finalizedStatus,
+    display_status: hasCompletedAttendance
+      ? finalizedStatus
+      : 'incomplete',
+    completion_state: hasCompletedAttendance ? 'completed' : 'incomplete',
+    check_in_status: checkInStatus,
+    check_out_status: hasCompletedAttendance
+      ? 'present'
+      : null,
+    time_in: timeIn,
+    time_out: timeOut,
+    duration_minutes: result?.duration_minutes ?? existingAttendanceRecord?.duration_minutes ?? null,
+    is_valid_attendance: isValidCompletedAttendance,
+    notes: hasCompletedAttendance
+      ? (
+          isValidCompletedAttendance
+            ? null
+            : existingAttendanceRecord?.notes ?? 'Attendance was completed, but the final result is not valid.'
+        )
+      : 'Pending sign-out.',
+  }
+}
+
+function preferCompletedAttendanceRecord(primaryRecord, fallbackRecord) {
+  if (!primaryRecord) return fallbackRecord ?? null
+  if (!fallbackRecord) return primaryRecord
+
+  const primaryCompleted = resolveAttendanceCompletionState(primaryRecord) === 'completed'
+  const fallbackCompleted = resolveAttendanceCompletionState(fallbackRecord) === 'completed'
+
+  if (primaryCompleted !== fallbackCompleted) {
+    return primaryCompleted ? primaryRecord : fallbackRecord
+  }
+
+  const primaryHasTimeOut = hasSignedOutAttendance(primaryRecord)
+  const fallbackHasTimeOut = hasSignedOutAttendance(fallbackRecord)
+  if (primaryHasTimeOut !== fallbackHasTimeOut) {
+    return primaryHasTimeOut ? primaryRecord : fallbackRecord
+  }
+
+  return primaryRecord
+}
+
+function resolveLocationErrorMessage(source, fallback = 'Unable to verify your location.') {
+  const detail = source?.details ?? source?.detail ?? source
+  const hasLocationDetail = detail && typeof detail === 'object' && (
+    detail.reason != null
+    || detail.distance_m != null
+    || detail.radius_m != null
+    || detail.accuracy_m != null
+  )
+
+  if (hasLocationDetail) {
+    return buildAttendanceLocationErrorMessage(detail)
+  }
+
+  const message = String(source?.message || '').trim()
+  return message || fallback
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function getBrowserLocation() {
-  if (!('geolocation' in navigator)) return null
+async function getEventLocation() {
+  const desiredAccuracy = Number(event.value?.geo_max_accuracy_m)
 
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        resolve({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        })
-      },
-      () => resolve(null),
-      {
-        enableHighAccuracy: geolocationHighAccuracy,
-        timeout: geolocationTimeoutMs,
-        maximumAge: geolocationMaxAgeMs,
+  return getCurrentPositionWithinAccuracyOrThrow({
+    desiredAccuracy: Number.isFinite(desiredAccuracy) && desiredAccuracy > 0
+      ? desiredAccuracy
+      : null,
+    enableHighAccuracy: geolocationHighAccuracy,
+    timeout: Math.max(geolocationTimeoutMs, 9000),
+    maximumAge: Math.max(geolocationMaxAgeMs, 45000),
+    onAccuracyUpdate: (accuracy) => {
+      const latitude = Number(userCoords.value?.latitude)
+      const longitude = Number(userCoords.value?.longitude)
+      userCoords.value = {
+        latitude: Number.isFinite(latitude) ? latitude : null,
+        longitude: Number.isFinite(longitude) ? longitude : null,
+        accuracy,
+        capturedAt: new Date().toISOString(),
       }
-    )
+
+      if (Number.isFinite(desiredAccuracy) && desiredAccuracy > 0 && accuracy > desiredAccuracy) {
+        locationMessage.value = `Waiting for a precise GPS fix... current accuracy ${Math.round(accuracy)}m.`
+        return
+      }
+
+      locationMessage.value = `GPS locked at ${Math.round(accuracy)}m accuracy.`
+    },
   })
 }
 
@@ -386,55 +697,102 @@ function resolveEventGeo() {
 
 async function recordFaceScanAttendance() {
   const eventIdValue = eventId.value
-  const studentIdValue = currentUser.value?.student_profile?.student_id
   const imageDataUrl = capturedFaceDataUrl.value
-  if (!eventIdValue || !studentIdValue || !imageDataUrl) {
+  if (!eventIdValue) {
+    throw new Error('Event information is missing. Please go back and try again.')
+  }
+  if (!imageDataUrl) {
     throw new Error('A live face capture is required before attendance can be recorded.')
   }
+
+  const studentIdValue = currentUser.value?.student_profile?.student_id
+    || currentUser.value?.id
+    || null
 
   const token = localStorage.getItem('aura_token')
   const rawBase64 = imageDataUrl.includes(',') ? imageDataUrl.split(',')[1] : imageDataUrl
   const payload = {
     eventId: eventIdValue,
-    studentId: String(studentIdValue),
+    studentId: studentIdValue != null ? String(studentIdValue) : '',
     imageBase64: imageDataUrl,
     latitude: userCoords.value?.latitude ?? null,
     longitude: userCoords.value?.longitude ?? null,
     accuracyM: userCoords.value?.accuracy ?? null,
   }
 
+  let result = null
   try {
-    await postFaceScanAttendance(apiBaseUrl, token, payload)
+    result = await postFaceScanAttendance(apiBaseUrl, token, payload)
   } catch {
-    await postFaceScanAttendance(apiBaseUrl, token, {
+    result = await postFaceScanAttendance(apiBaseUrl, token, {
       ...payload,
       imageBase64: rawBase64,
     })
   }
-  await refreshAttendanceRecords({ event_id: eventIdValue })
-}
 
-async function recordFaceScanTimeout() {
-  const eventIdValue = eventId.value
-  const studentIdValue = currentUser.value?.student_profile?.student_id
-  if (!eventIdValue || !studentIdValue) return
+  if (result && !result.ok) {
+    throw new Error(result.message || 'The server could not record your attendance.')
+  }
 
-  const token = localStorage.getItem('aura_token')
-  await postFaceScanTimeout(apiBaseUrl, token, {
-    eventId: eventIdValue,
-    studentId: String(studentIdValue),
-  })
+  if (result?.geo?.time_status) {
+    eventTimeStatus.value = result.geo.time_status
+  }
+
+  if (result?.geo) {
+    setLocationVerificationResult(result.geo)
+  }
+
+  let attendanceContext = {
+    attendanceRecord: getLatestAttendanceForEvent(eventIdValue),
+    timeStatus: eventTimeStatus.value,
+  }
+
+  try {
+    attendanceContext = await refreshAttendanceContext()
+  } catch {
+    // Keep the successful backend face-scan result even if the follow-up refresh fails.
+  }
+
+  const optimisticAttendanceRecord = buildOptimisticAttendanceRecord(
+    result,
+    attendanceContext.attendanceRecord || latestAttendanceRecord.value
+  )
+
+  if (optimisticAttendanceRecord) {
+    upsertAttendanceRecordSnapshot(optimisticAttendanceRecord)
+    attendanceContext = {
+      ...attendanceContext,
+      attendanceRecord: preferCompletedAttendanceRecord(
+        attendanceContext.attendanceRecord,
+        optimisticAttendanceRecord,
+      ),
+    }
+  }
+
+  return {
+    result,
+    attendanceRecord: attendanceContext.attendanceRecord,
+    timeStatus: attendanceContext.timeStatus,
+  }
 }
 
 async function waitForLocationCheck() {
   while (true) {
     locationStatus.value = 'checking'
     locationError.value = ''
+    locationMessage.value = 'Checking event location...'
+    clearLocationVerificationState()
 
-    const coords = await getBrowserLocation()
-    if (!coords) {
+    const coords = await getEventLocation().catch((error) => {
       locationStatus.value = 'error'
-      locationError.value = 'Location access is required to continue.'
+      locationError.value = error?.message || 'Location access is required to continue.'
+      return null
+    })
+    if (!coords) {
+      if (!locationError.value) {
+        locationStatus.value = 'error'
+        locationError.value = 'Unable to determine your location. Make sure location services are on and try again.'
+      }
       await waitForLocationRetry()
       continue
     }
@@ -448,6 +806,9 @@ async function waitForLocationCheck() {
 
     if (!event.value?.geo_required) {
       locationStatus.value = 'ok'
+      locationMessage.value = Number.isFinite(Number(coords.accuracy))
+        ? `Location verified. GPS accuracy ${Math.round(Number(coords.accuracy))}m.`
+        : 'Location verified.'
       return
     }
 
@@ -459,15 +820,21 @@ async function waitForLocationCheck() {
         accuracy_m: coords.accuracy ?? null,
       })
 
+      if (verification?.time_status) {
+        eventTimeStatus.value = verification.time_status
+      }
+
+      setLocationVerificationResult(verification)
+
       if (!verification?.ok) {
         locationStatus.value = 'error'
-        locationError.value = verification?.reason || 'You are outside the allowed event area.'
+        locationError.value = buildAttendanceLocationErrorMessage(verification)
         await waitForLocationRetry()
         continue
       }
     } catch (error) {
       locationStatus.value = 'error'
-      locationError.value = error?.message || 'Unable to verify your location.'
+      locationError.value = resolveLocationErrorMessage(error)
       await waitForLocationRetry()
       continue
     }
@@ -480,9 +847,11 @@ async function waitForLocationCheck() {
 async function runAttendanceFlow() {
   if (isRunning.value) return
   isRunning.value = true
+  recordingFailed.value = false
 
   try {
     flowStep.value = 'face'
+    locationMessage.value = 'Checking event location...'
     await nextTick()
     await startCamera()
     await waitForFaceDetection()
@@ -491,10 +860,13 @@ async function runAttendanceFlow() {
     flowStep.value = 'location'
     stopCamera()
     await waitForLocationCheck()
-    await recordFaceScanAttendance()
+    await attemptRecordAttendance()
     flowStep.value = 'success'
   } catch (error) {
-    const message = error?.message || 'Unable to record your attendance right now.'
+    const message = resolveLocationErrorMessage(
+      error,
+      'Unable to record your attendance right now.'
+    )
     if (flowStep.value === 'location') {
       locationStatus.value = 'error'
       locationError.value = message
@@ -507,14 +879,47 @@ async function runAttendanceFlow() {
   }
 }
 
+async function attemptRecordAttendance() {
+  while (true) {
+    try {
+      recordingFailed.value = false
+      locationError.value = ''
+      const attendanceOutcome = await recordFaceScanAttendance()
+      successReason.value = resolveSuccessReasonFromScanResult(
+        attendanceOutcome?.result,
+        attendanceOutcome?.attendanceRecord,
+        attendanceOutcome?.timeStatus,
+      )
+      return
+    } catch (error) {
+      recordingFailed.value = true
+      locationStatus.value = 'error'
+      locationError.value = resolveLocationErrorMessage(
+        error,
+        'Unable to record your attendance. Please try again.'
+      )
+      await waitForLocationRetry()
+    }
+  }
+}
+
 function openInMaps() {
   if (!mapDestination.value) return
   const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapDestination.value)}`
   window.open(url, '_blank', 'noopener')
 }
 
-function goBack() {
-  router.back()
+async function goBack() {
+  if (['signed-out', 'signed-in', 'waiting-sign-out'].includes(successReason.value)) {
+    await refreshAttendanceContext().catch(() => null)
+  }
+
+  if (hasNavigableHistory(route)) {
+    router.back()
+    return
+  }
+
+  router.push(resolveBackFallbackLocation(route, { eventId: eventId.value }))
 }
 
 function retryFaceScan() {
@@ -556,6 +961,7 @@ function captureVideoFrame() {
 function retryLocationCheck() {
   locationError.value = ''
   locationStatus.value = 'checking'
+  recordingFailed.value = false
   if (locationRetryResolve) {
     const resolve = locationRetryResolve
     locationRetryResolve = null
@@ -688,6 +1094,17 @@ function waitForFaceOrTimeout() {
   })
 }
 
+async function completeFaceCaptureFallback() {
+  if (faceScanProgress.value <= 0) {
+    startFaceProgress()
+  } else if (faceScanProgress.value < faceScanProgressMax) {
+    animateFaceProgress(faceScanProgressMax, Math.max(180, faceScanProgressDuration / 2))
+  }
+  await delay(Math.max(320, faceScanProgressDuration))
+  animateFaceProgress(100, 260)
+  await delay(260)
+}
+
 async function waitForFaceDetection() {
   if (!faceScanGateEnabled) {
     animateFaceProgress(100, 240)
@@ -701,17 +1118,15 @@ async function waitForFaceDetection() {
     const readyState = await waitForVideoReady()
     if (readyState !== 'ready') {
       faceScanError.value = true
-      if (readyState === 'denied' && allowDeniedFallback) return
       await waitForRetry()
       continue
     }
 
     const detectorReady = await ensureFaceDetector()
     if (!detectorReady) {
-      faceScanError.value = true
-      if (allowUnsupportedFallback) return
-      await waitForRetry()
-      continue
+      faceScanError.value = false
+      await completeFaceCaptureFallback()
+      return
     }
 
     startFaceDetection()
@@ -726,12 +1141,15 @@ async function waitForFaceDetection() {
       return
     }
 
-    faceScanError.value = true
+    stopFaceDetection()
+
     if (result === 'timeout') {
-      stopFaceDetection()
-      recordFaceScanTimeout().catch(() => null)
+      faceScanError.value = false
+      await completeFaceCaptureFallback()
+      return
     }
-    if (result === 'denied' && allowDeniedFallback) return
+
+    faceScanError.value = true
     await waitForRetry()
   }
 }
@@ -876,11 +1294,14 @@ function stopFaceDetection() {
 watch(flowStep, (step) => {
   if (step === 'face') {
     faceScanError.value = false
+    locationMessage.value = 'Checking event location...'
+    clearLocationVerificationState()
     return
   }
   if (step === 'location') {
     locationStatus.value = 'checking'
     locationError.value = ''
+    locationMessage.value = 'Checking event location...'
     return
   }
   retryResolve = null
@@ -937,17 +1358,54 @@ function updateTrackMetrics() {
 
 let trackResizeObserver = null
 
-onMounted(async () => {
+async function initializeAttendanceFlow() {
   await ensureDashboardEvent(eventId.value).catch(() => null)
   if (!event.value) return
 
-  if (hasAttendanceForEvent(eventId.value)) {
+  const { attendanceRecord, timeStatus } = await refreshAttendanceContext()
+  const actionState = resolveAttendanceActionState({
+    event: event.value,
+    eventStatus: event.value?.status,
+    attendanceRecord,
+    timeStatus,
+  })
+
+  if (actionState === 'done') {
     successReason.value = 'existing'
     flowStep.value = 'success'
-  } else {
-    successReason.value = 'recorded'
-    runAttendanceFlow()
+    return
   }
+
+  if (actionState === 'waiting-sign-out') {
+    successReason.value = 'waiting-sign-out'
+    flowStep.value = 'success'
+    return
+  }
+
+  if (actionState === 'not-open') {
+    successReason.value = 'not-open'
+    flowStep.value = 'success'
+    return
+  }
+
+  if (actionState === 'missed-check-in') {
+    successReason.value = 'missed-check-in'
+    flowStep.value = 'success'
+    return
+  }
+
+  if (actionState === 'closed') {
+    successReason.value = 'closed'
+    flowStep.value = 'success'
+    return
+  }
+
+  successReason.value = 'recorded'
+  void runAttendanceFlow()
+}
+
+onMounted(async () => {
+  await initializeAttendanceFlow()
 
   nextTick(updateTrackMetrics)
   if (stepTrackEl.value && typeof ResizeObserver !== 'undefined') {
@@ -1263,6 +1721,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: #d24848;
   margin: 0;
+  text-align: center;
+  line-height: 1.45;
+}
+
+.location-hint--ok {
+  color: #1f7a4f;
 }
 
 .location-next-btn {
@@ -1330,6 +1794,16 @@ onBeforeUnmount(() => {
   max-width: 160px;
   line-height: 1.3;
   align-self: center;
+}
+
+.success-detail {
+  margin: -18px 0 0;
+  max-width: 220px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+  color: #5a6472;
 }
 
 .success-btn {
